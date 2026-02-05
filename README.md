@@ -8,11 +8,10 @@ Navigate your spaceship through space in this retro-styled ASCII game. Engage ho
 
 ## Features
 
-- **First-Person Perspective**: Experience space combat from the cockpit
-- **ASCII Graphics**: Classic terminal-style visuals that work anywhere
-- **Cross-Platform**: Native terminal support and browser deployment via WASM
+- **First-Person Perspective**: Space combat from the cockpit
+- **ASCII Graphics**: Terminal-style visuals that work anywhere
+- **Cross-Platform**: Terminal support and browser deployment via WASM
 - **Fast-Paced Action**: Dodge and shoot your way through enemies
-- **Rust Performance**: Leveraging Rust's speed and safety guarantees
 
 ## Prerequisites
 
@@ -22,11 +21,19 @@ Navigate your spaceship through space in this retro-styled ASCII game. Engage ho
 
 ## Getting Started
 
+As of right now, if you have a rust toolchain installed, you can run:
+1. `cargo build --release`
+2. `cargo run --release`
+
+This is enough to get you an environment but may not always be the case.
+
 ### Setting Up the Development Environment
 
 This project uses `devenv` to manage all development dependencies and tools.
 
-1. Install devenv if you haven't already:
+Note: personally I use `direnv` which automatically loads the `devenv` environment when I enter the project directory while also letting me use my normal shell instead of it's default `bash`.
+
+1. Install devenv
    ```sh
    # See https://devenv.sh/getting-started/ for installation instructions
    ```
@@ -57,9 +64,8 @@ cargo run
 
 ## Controls
 
-- **Arrow Keys / WASD**: Navigate your spaceship
-- **Space**: Fire weapons
-- **ESC**: Pause / Menu
+- **Arrow Keys / WASD**: Navigate options / Move ship view
+- **Enter**: Select option / Pause game
 - **Q**: Quit (TUI version)
 
 ## Development
@@ -70,10 +76,13 @@ cargo run
 .
 ├── src/
 │   ├── main.rs          # Entry point
-│   ├── game/            # Game logic
-│   ├── renderer/        # ASCII rendering engine
-│   ├── entities/        # Player, enemies, projectiles
-│   └── wasm/            # WebAssembly bindings
+│   └── tui/             # TUI implementation
+│       ├── mod.rs       # Module root & event loop
+│       ├── app.rs       # App state
+│       ├── menu.rs      # Menu logic
+│       ├── ui.rs        # Menu rendering
+│       ├── game.rs      # Game state
+│       └── game_ui.rs   # Game rendering
 ├── assets/              # ASCII art and resources
 ├── devenv.nix           # Development environment configuration
 ├── devenv.lock          # Locked dependencies
@@ -101,7 +110,8 @@ cargo test
 
 ## Roadmap
 
-- [ ] Basic movement and shooting mechanics
+- [x] Basic movement
+- [ ] Shooting mechanics
 - [ ] Enemy AI patterns
 - [ ] Multiple enemy types
 - [ ] Score tracking and leaderboards
