@@ -4,6 +4,7 @@
 //! using ratatui for rendering.
 
 mod app;
+mod enemy;
 mod game;
 mod game_ui;
 mod menu;
@@ -12,14 +13,14 @@ mod ui;
 pub use app::App;
 pub use menu::MenuItem;
 
-use std::io;
 use color_eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
+use std::io;
 
 use game::GameState;
 
