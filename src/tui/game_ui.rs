@@ -30,6 +30,18 @@ const COCKPIT: &[&str] = &[
     r" /                                        \ ",
 ];
 
+/// Compact Cockpit ASCII art (for smaller screens)
+const COCKPIT_SMALL: &[&str] = &[
+    r"      /_______|              |_______\      ",
+    r"     |   _____|              |_____   |     ",
+    r"     |  /                            \  |     ",
+    r"     | /          ________            \ |     ",
+    r"     |/          /   /\   \            \|     ",
+    r"    _|__________/   /  \   \____________|_    ",
+    r"   /            \__/    \__/              \   ",
+    r"  /                                        \  ",
+];
+
 /// Render the entire game screen
 pub fn render(frame: &mut Frame, game: &GameState) {
     let area = frame.area();
@@ -39,22 +51,39 @@ pub fn render(frame: &mut Frame, game: &GameState) {
     frame.render_widget(block, area);
 
     // Layout: Stars, Game view, Cockpit, HUD
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(6),  // Top Sky/Stars
-            Constraint::Min(10),    // Game view (perspective grid)
-            Constraint::Length(14), // Cockpit
-            Constraint::Length(1),  // HUD
-        ])
-        .split(area);
+    let height = area.height;
+    let use_compact = height < 35;
+
+    let (layout, cockpit_art) = if use_compact {
+        let l = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Reduced Sky
+                Constraint::Min(8),    // Game view
+                Constraint::Length(9), // Compact Cockpit (8 lines + 1 padding potentially)
+                Constraint::Length(1), // HUD
+            ])
+            .split(area);
+        (l, COCKPIT_SMALL)
+    } else {
+        let l = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(6),  // Top Sky/Stars
+                Constraint::Min(10),    // Game view
+                Constraint::Length(14), // Full Cockpit
+                Constraint::Length(1),  // HUD
+            ])
+            .split(area);
+        (l, COCKPIT)
+    };
 
     render_sky(frame, layout[0], game);
     // Combine layout[1] and part of layout[0] logic for proper specific rendering if needed,
     // but here we treat layout[1] as the main viewport for the trench run.
     render_trench(frame, layout[1], game);
     render_enemies(frame, layout[1], game);
-    render_cockpit(frame, layout[2], game);
+    render_cockpit(frame, layout[2], game, cockpit_art);
     render_hud(frame, layout[3], game);
 
     // Pause overlay
@@ -240,16 +269,16 @@ fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState) {
 }
 
 /// Render cockpit/ship view
-fn render_cockpit(frame: &mut Frame, area: Rect, game: &GameState) {
+fn render_cockpit(frame: &mut Frame, area: Rect, game: &GameState, art: &[&str]) {
     let width = area.width as usize;
 
     // Center the cockpit
-    let cockpit_width = COCKPIT.first().map(|s| s.len()).unwrap_or(0);
+    let cockpit_width = art.first().map(|s| s.len()).unwrap_or(0);
     // Move cockpit slightly opposite to ship movement for parallax feel
     let offset_x = (game.ship_x * 4.0) as i32;
     let padding = ((width as i32 - cockpit_width as i32) / 2 + offset_x).max(0) as usize;
 
-    let lines: Vec<Line> = COCKPIT
+    let lines: Vec<Line> = art
         .iter()
         .map(|&s| {
             let padded = format!("{:>width$}", s, width = padding + s.len());
