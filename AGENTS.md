@@ -13,10 +13,12 @@ Spacey is a Rust-based TUI space shooter using `ratatui` for rendering and `cros
 - **`menu.rs`**: Defines `MenuItem` enums and labels.
 - **`ui.rs`**: Renders the Start Menu (ASCII title, options).
 - **`game.rs`**: Core game logic.
-  - `GameState`: Struct holding ship position (`ship_x`, `ship_y`), score, and flags (`paused`, `should_exit`).
+  - `GameState`: Struct holding ship position (`ship_x`, `ship_y`), score, `lasers`, `enemies`, and flags (`paused`, `should_exit`).
   - `update()`: called every frame to advance animation time.
 - **`game_ui.rs`**: Renders the Game Screen.
   - Uses a calculated perspective grid to simulate forward motion.
+  - `render_lasers()`: Renders projectile shots with parallax-independent physics.
+  - `render_crosshair()`: Renders a static centered aiming reticle.
   - `render_pause_overlay()`: Draws over the game when `paused` is true.
 
 ## Design Patterns

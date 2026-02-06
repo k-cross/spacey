@@ -76,17 +76,16 @@ fn run_menu<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
     while app.is_running() {
         terminal.draw(|frame| ui::render(frame, app))?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => app.quit(),
-                        KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                        KeyCode::Down | KeyCode::Char('j') => app.next(),
-                        KeyCode::Enter => app.select(),
-                        _ => {}
-                    }
-                }
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') => app.quit(),
+                KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                KeyCode::Down | KeyCode::Char('j') => app.next(),
+                KeyCode::Enter => app.select(),
+                _ => {}
             }
         }
     }
@@ -103,19 +102,19 @@ fn run_game<B: Backend>(terminal: &mut Terminal<B>, game: &mut GameState) -> Res
         terminal.draw(|frame| game_ui::render(frame, game))?;
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Left | KeyCode::Char('a') => game.move_left(),
-                        KeyCode::Right | KeyCode::Char('d') => game.move_right(),
-                        KeyCode::Up | KeyCode::Char('w') => game.move_up(),
-                        KeyCode::Down | KeyCode::Char('s') => game.move_down(),
-                        KeyCode::Enter => game.toggle_pause(),
-                        KeyCode::Char('q') => game.exit_to_menu(),
-                        _ => {}
-                    }
-                }
+        if event::poll(std::time::Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Left | KeyCode::Char('a') => game.move_left(),
+                KeyCode::Right | KeyCode::Char('d') => game.move_right(),
+                KeyCode::Up | KeyCode::Char('w') => game.move_up(),
+                KeyCode::Down | KeyCode::Char('s') => game.move_down(),
+                KeyCode::Char(' ') => game.fire_laser(),
+                KeyCode::Enter => game.toggle_pause(),
+                KeyCode::Char('q') => game.exit_to_menu(),
+                _ => {}
             }
         }
     }

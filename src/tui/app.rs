@@ -76,3 +76,45 @@ impl Default for App {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_initial_state() {
+        let app = App::new();
+        assert!(app.is_running());
+        assert_eq!(app.selected_index(), 0);
+        assert!(app.selected_action().is_none());
+    }
+
+    #[test]
+    fn test_navigation() {
+        let mut app = App::new();
+        let menu_len = MenuItem::all().len();
+
+        // Previous from 0 wraps to end
+        app.previous();
+        assert_eq!(app.selected_index(), menu_len - 1);
+
+        // Next wraps around
+        app.next();
+        assert_eq!(app.selected_index(), 0);
+
+        app.next();
+        assert_eq!(app.selected_index(), 1);
+    }
+
+    #[test]
+    fn test_selection_and_quit() {
+        let mut app = App::new();
+        // Assuming "Exit" is the last item or we can find it
+        // Check menu.rs for order. usually [Start, Exit].
+        // Let's just select current (Start)
+        app.select();
+        // Current implementation quits on any selection (placeholder behavior logic in app.rs check line 63)
+        assert!(!app.is_running());
+        assert!(app.selected_action().is_some());
+    }
+}

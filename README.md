@@ -65,6 +65,7 @@ cargo run
 ## Controls
 
 - **Arrow Keys / WASD**: Navigate options / Move ship view
+- **Space**: Fire lasers
 - **Enter**: Select option / Pause game
 - **Q**: Quit (TUI version)
 
@@ -112,6 +113,7 @@ cargo test
 
 - [x] Basic movement
 - [ ] Shooting mechanics
+- [ ] World and Rotational Geometry/Positioning
 - [ ] Enemy AI patterns
 - [ ] Multiple enemy types
 - [ ] Score tracking and leaderboards

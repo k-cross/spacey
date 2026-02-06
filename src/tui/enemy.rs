@@ -46,3 +46,34 @@ impl Enemy {
         self.z > 0.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enemy_spawn() {
+        let enemy = Enemy::new(12345);
+        assert_eq!(enemy.z, 100.0);
+        // Ensure x, y within bounds
+        assert!(enemy.x >= -1.0 && enemy.x <= 1.0);
+    }
+
+    #[test]
+    fn test_enemy_update() {
+        let mut enemy = Enemy::new(1);
+        let start_z = enemy.z;
+        enemy.update(1.0);
+        assert_eq!(enemy.z, start_z - 1.0);
+    }
+
+    #[test]
+    fn test_visibility() {
+        let mut enemy = Enemy::new(1);
+        enemy.z = 0.1;
+        assert!(enemy.is_visible());
+
+        enemy.update(0.2); // z becomes -0.1
+        assert!(!enemy.is_visible());
+    }
+}

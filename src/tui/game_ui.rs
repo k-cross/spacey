@@ -83,7 +83,9 @@ pub fn render(frame: &mut Frame, game: &GameState) {
     // but here we treat layout[1] as the main viewport for the trench run.
     render_trench(frame, layout[1], game);
     render_enemies(frame, layout[1], game);
+    render_lasers(frame, layout[1], game);
     render_cockpit(frame, layout[2], game, cockpit_art);
+    render_crosshair(frame, layout[1], game);
     render_hud(frame, layout[3], game);
 
     // Pause overlay
@@ -95,8 +97,10 @@ pub fn render(frame: &mut Frame, game: &GameState) {
 /// Render sky/stars
 fn render_sky(frame: &mut Frame, area: Rect, game: &GameState) {
     let width = area.width as usize;
+    // Stars still shift for parallax against ship movement?
+    // If we want "Cockpit" centered, the universe should move opposite.
+    // That means the "Sky" should shift opposite to ship_x.
     let offset = (game.ship_x * 10.0) as i32;
-    // Just a simple static star field for now
     let stars: String = (0..width)
         .map(|i| {
             let pos = (i as i32 + offset).rem_euclid(7);
@@ -268,15 +272,101 @@ fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState) {
     }
 }
 
+/// Render lasers
+fn render_lasers(frame: &mut Frame, area: Rect, game: &GameState) {
+    let width = area.width as f32;
+    let height = area.height as f32;
+    // same VP logic
+    let vp_x = width / 2.0 - (game.ship_x * (width / 3.0));
+    let vp_y = height / 2.0 - (game.ship_y * (height / 3.0));
+
+    for laser in &game.lasers {
+        if laser.z <= 1.0 {
+            continue;
+        }
+        let scale = 100.0 / laser.z;
+
+        // Projected Position
+        let world_x = laser.x * width;
+        let world_y = laser.y * height;
+
+        let proj_x = vp_x + (world_x * scale * 0.5);
+        let proj_y = vp_y + (world_y * scale * 0.5);
+
+        if proj_x < 0.0 || proj_x >= width || proj_y < 0.0 || proj_y >= height {
+            continue;
+        }
+
+        let x = proj_x as u16;
+        let y = proj_y as u16;
+
+        let sprite = match scale {
+            s if s < 2.0 => ".",
+            s if s < 5.0 => "|",
+            _ => "||",
+        };
+
+        // Simple 1x1 or 2x1 laser
+        // Center the sprite? Laser is small.
+        let laser_area = Rect {
+            x: area.x + x,
+            y: area.y + y,
+            width: sprite.len() as u16,
+            height: 1,
+        };
+
+        let render_area = area.intersection(laser_area);
+
+        if render_area.area() > 0 {
+            frame.render_widget(
+                Paragraph::new(sprite).style(Style::default().fg(Color::Red)),
+                render_area,
+            );
+        }
+    }
+}
+
+/// Render crosshair
+fn render_crosshair(frame: &mut Frame, area: Rect, _game: &GameState) {
+    let width = area.width;
+    let height = area.height;
+
+    // Crosshair strictly centered
+    let center_x = (width / 2) as i16;
+    let center_y = (height / 2) as i16;
+
+    let ch_x = center_x - 2; // Center "[ + ]"
+    let ch_y = center_y;
+
+    if ch_x >= 0 && ch_x < width as i16 && ch_y >= 0 && ch_y < height as i16 {
+        let ch_area = Rect {
+            x: area.x + ch_x as u16,
+            y: area.y + ch_y as u16,
+            width: 5,
+            height: 1,
+        };
+
+        let render_area = area.intersection(ch_area);
+        if render_area.area() > 0 {
+            frame.render_widget(
+                Paragraph::new("[ + ]").style(
+                    Style::default()
+                        .fg(PHOSPHOR_GREEN_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                render_area,
+            );
+        }
+    }
+}
+
 /// Render cockpit/ship view
-fn render_cockpit(frame: &mut Frame, area: Rect, game: &GameState, art: &[&str]) {
+fn render_cockpit(frame: &mut Frame, area: Rect, _game: &GameState, art: &[&str]) {
     let width = area.width as usize;
 
-    // Center the cockpit
+    // Center the cockpit (no parallax)
     let cockpit_width = art.first().map(|s| s.len()).unwrap_or(0);
-    // Move cockpit slightly opposite to ship movement for parallax feel
-    let offset_x = (game.ship_x * 4.0) as i32;
-    let padding = ((width as i32 - cockpit_width as i32) / 2 + offset_x).max(0) as usize;
+    let padding = ((width as i32 - cockpit_width as i32) / 2).max(0) as usize;
 
     let lines: Vec<Line> = art
         .iter()
