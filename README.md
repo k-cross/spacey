@@ -12,6 +12,7 @@ Navigate your spaceship through space in this retro-styled ASCII game. Engage ho
 - **ASCII Graphics**: Terminal-style visuals that work anywhere
 - **Cross-Platform**: Terminal support and browser deployment via WASM
 - **Fast-Paced Action**: Dodge and shoot your way through enemies
+- **Combat Mechanics**: Collision detection, shield capacity, and dynamic explosion animations
 
 ## Prerequisites
 
@@ -114,6 +115,7 @@ cargo test
 - [x] Basic movement (Continuous 2D movement)
 - [x] Shooting mechanics (Continuous firing)
 - [x] Enemy basic entities
+- [x] Collision detection and shield system
 - [ ] Enemy AI patterns
 - [ ] Multiple enemy types
 - [ ] Score tracking and leaderboards

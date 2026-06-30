@@ -34,6 +34,7 @@ pub fn render(frame: &mut Frame, game: &GameState) {
     render_starfield(frame, game_area, game);
     render_enemies(frame, game_area, game);
     render_lasers(frame, game_area, game);
+    render_explosions(frame, game_area, game);
     render_ship(frame, game_area, game);
     render_hud(frame, hud_area, game);
 
@@ -181,10 +182,45 @@ fn render_lasers(frame: &mut Frame, area: Rect, game: &GameState) {
     }
 }
 
+/// Render explosions
+fn render_explosions(frame: &mut Frame, area: Rect, game: &GameState) {
+    let width = area.width as f32;
+    let height = area.height as f32;
+
+    for explosion in &game.explosions {
+        let x_pos = ((explosion.x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
+        let y_pos = ((explosion.y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
+
+        if x_pos >= 0 && x_pos < area.width as i32 && y_pos >= 0 && y_pos < area.height as i32 {
+            let sprite = match explosion.timer {
+                0..=2 => "*",
+                3..=5 => "O",
+                6..=9 => ".",
+                _ => " ",
+            };
+
+            let explosion_area = Rect {
+                x: area.x + x_pos as u16,
+                y: area.y + y_pos as u16,
+                width: 1,
+                height: 1,
+            };
+
+            let render_area = area.intersection(explosion_area);
+            if render_area.area() > 0 {
+                frame.render_widget(
+                    Paragraph::new(sprite).style(Style::default().fg(Color::Yellow)),
+                    render_area,
+                );
+            }
+        }
+    }
+}
+
 /// Render HUD bar at bottom
 fn render_hud(frame: &mut Frame, area: Rect, game: &GameState) {
-    // Shield bar: "SHIELD: ||||||||"
-    let shield_str: String = (0..8)
+    // Shield bar: "SHIELD: |||"
+    let shield_str: String = (0..3)
         .map(|i| if i < game.shield as usize { '|' } else { ' ' })
         .collect();
 

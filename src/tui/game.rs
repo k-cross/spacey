@@ -10,6 +10,16 @@ pub struct Laser {
     pub x: f32,
     /// View Y offset (-1.0 to 1.0)
     pub y: f32,
+    /// Flag indicating if laser is dead
+    pub dead: bool,
+}
+
+/// Explosion animation state
+#[derive(Debug, Clone)]
+pub struct Explosion {
+    pub x: f32,
+    pub y: f32,
+    pub timer: u8,
 }
 
 /// Game state during active gameplay
@@ -46,6 +56,8 @@ pub struct GameState {
     pub shield: u8,
     /// Active enemies
     pub enemies: Vec<Enemy>,
+    /// Active explosions
+    pub explosions: Vec<Explosion>,
 }
 
 impl GameState {
@@ -66,8 +78,9 @@ impl GameState {
             should_exit: false,
             score: 0,
             altitude: 1500,
-            shield: 10,
+            shield: 3,
             enemies: Vec::new(),
+            explosions: Vec::new(),
         };
         // Add some initial visual enemies
         state.spawn_enemy();
@@ -130,9 +143,48 @@ impl GameState {
                 laser.y -= laser_speed;
             }
 
-            // Remove distant objects
-            self.enemies.retain(|e| e.is_visible());
-            self.lasers.retain(|l| l.y > -1.2);
+            // Collision detection: lasers vs enemies
+            for enemy in &mut self.enemies {
+                for laser in &mut self.lasers {
+                    if !enemy.dead && !laser.dead {
+                        let dx = enemy.x - laser.x;
+                        let dy = enemy.y - laser.y;
+                        if dx * dx + dy * dy < 0.05 * 0.05 {
+                            enemy.dead = true;
+                            laser.dead = true;
+                            self.score = self.score.wrapping_add(10);
+                            self.explosions.push(Explosion { x: enemy.x, y: enemy.y, timer: 0 });
+                        }
+                    }
+                }
+            }
+
+            // Collision detection: ship vs enemies
+            for enemy in &mut self.enemies {
+                if !enemy.dead {
+                    let dx = enemy.x - self.ship_x;
+                    let dy = enemy.y - self.ship_y;
+                    if dx * dx + dy * dy < 0.08 * 0.08 {
+                        enemy.dead = true;
+                        self.explosions.push(Explosion { x: enemy.x, y: enemy.y, timer: 0 });
+                        if self.shield > 0 {
+                            self.shield -= 1;
+                        } else {
+                            self.should_exit = true; // Game over
+                        }
+                    }
+                }
+            }
+
+            // Remove distant or dead objects
+            self.enemies.retain(|e| !e.dead && e.is_visible());
+            self.lasers.retain(|l| !l.dead && l.y > -1.2);
+
+            // Update explosions
+            for explosion in &mut self.explosions {
+                explosion.timer = explosion.timer.saturating_add(1);
+            }
+            self.explosions.retain(|e| e.timer < 10);
         }
     }
 
@@ -144,6 +196,7 @@ impl GameState {
                 self.lasers.push(Laser {
                     x: self.ship_x,
                     y: self.ship_y,
+                    dead: false,
                 });
                 self.last_fire_frame = self.frame;
             }
@@ -301,5 +354,74 @@ mod tests {
 
         game.update(); // Cooldown met, fires again!
         assert_eq!(game.lasers.len(), initial_lasers + 2);
+    }
+
+    #[test]
+    fn test_laser_enemy_collision() {
+        let mut game = GameState::new();
+        game.enemies.clear();
+        game.lasers.clear();
+
+        game.enemies.push(Enemy {
+            x: 0.0,
+            y: -0.02,
+            _kind: crate::tui::enemy::EnemyType::Fighter,
+            dead: false,
+        });
+        game.lasers.push(Laser { x: 0.0, y: 0.05, dead: false });
+
+        let initial_score = game.score;
+        game.update(); // Should process collision
+
+        assert!(game.enemies.is_empty());
+        assert!(game.lasers.is_empty());
+        assert!(game.score > initial_score);
+    }
+
+    #[test]
+    fn test_ship_enemy_collision() {
+        let mut game = GameState::new();
+        game.enemies.clear();
+        game.shield = 3;
+        game.ship_x = 0.0;
+        game.ship_y = 0.0;
+
+        game.enemies.push(Enemy { x: 0.0, y: 0.0, _kind: crate::tui::enemy::EnemyType::Fighter, dead: false });
+        
+        game.update(); // Should process collision
+        
+        assert!(game.enemies.is_empty());
+        assert_eq!(game.shield, 2);
+        assert!(!game.should_exit);
+        
+        // Test game over
+        game.shield = 0;
+        game.enemies.push(Enemy { x: 0.0, y: 0.0, _kind: crate::tui::enemy::EnemyType::Fighter, dead: false });
+
+        game.update(); // Should process collision
+
+        assert!(game.enemies.is_empty());
+        assert_eq!(game.shield, 0);
+        assert!(game.should_exit);
+    }
+
+    #[test]
+    fn test_multiple_collisions() {
+        let mut game = GameState::new();
+        game.enemies.clear();
+        game.lasers.clear();
+        game.ship_x = 1.0; // Move ship out of the way
+        game.ship_y = 1.0;
+        
+        // Push two enemies exactly overlapping, and one laser
+        game.enemies.push(Enemy { x: 0.0, y: -0.02, _kind: crate::tui::enemy::EnemyType::Fighter, dead: false });
+        game.enemies.push(Enemy { x: 0.0, y: -0.02, _kind: crate::tui::enemy::EnemyType::Fighter, dead: false });
+        game.lasers.push(Laser { x: 0.0, y: 0.05, dead: false });
+        
+        game.update();
+        
+        // Since the laser hits one enemy and is marked dead, it shouldn't hit the other
+        assert_eq!(game.enemies.len(), 1);
+        assert!(game.lasers.is_empty());
     }
 }

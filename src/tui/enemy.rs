@@ -16,6 +16,8 @@ pub struct Enemy {
     pub y: f32,
     /// Enemy type
     pub _kind: EnemyType,
+    /// Flag indicating if enemy is dead
+    pub dead: bool,
 }
 
 impl Enemy {
@@ -28,6 +30,7 @@ impl Enemy {
             x,
             y: -1.2, // Start slightly above the screen
             _kind: EnemyType::Fighter,
+            dead: false,
         }
     }
 
