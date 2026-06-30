@@ -35,16 +35,12 @@ This project uses `devenv` to manage all development dependencies and tools.
 Note: personally I use `direnv` which automatically loads the `devenv` environment when I enter the project directory while also letting me use my normal shell instead of it's default `bash`.
 
 1. Install devenv
-   ```sh
-   # See https://devenv.sh/getting-started/ for installation instructions
-   ```
-
 2. Enter the development environment:
    ```sh
    devenv shell
    ```
 
-   This will automatically set up:
+This will automatically set up:
    - Rust toolchain
    - wasm-pack
    - Other necessary development tools
@@ -79,12 +75,12 @@ cargo run
 ├── src/
 │   ├── main.rs          # Entry point
 │   └── tui/             # TUI implementation
-│       ├── mod.rs       # Module root & event loop
+│       ├── mod.rs       # Module root & event loop (Accumulator Pattern)
 │       ├── app.rs       # App state
 │       ├── menu.rs      # Menu logic
 │       ├── ui.rs        # Menu rendering
-│       ├── game.rs      # Game state
-│       └── game_ui.rs   # Game rendering
+│       ├── game.rs      # Game state and ECS data (Struct of Arrays)
+│       └── game_ui.rs   # Game rendering with visual interpolation
 ├── assets/              # ASCII art and resources
 ├── devenv.nix           # Development environment configuration
 ├── devenv.lock          # Locked dependencies
@@ -106,6 +102,7 @@ cargo test
 ## Technical Details
 
 - **Language**: Rust
+- **Architecture**: Data-Oriented Component Architecture (ECS) with a Fixed Update / Variable Render loop (Accumulator pattern)
 - **Rendering**: ASCII/ANSI escape codes (TUI), Canvas API (Web)
 - **Build Tool**: Cargo, wasm-pack
 - **Environment Management**: devenv

@@ -4,7 +4,6 @@
 //! using ratatui for rendering.
 
 mod app;
-mod enemy;
 mod game;
 mod game_ui;
 mod menu;
@@ -104,15 +103,19 @@ fn run_menu<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
 
 /// Run the game loop
 fn run_game<B: Backend>(terminal: &mut Terminal<B>, game: &mut GameState) -> Result<()> {
+    const TICK_RATE: f32 = 1.0 / 60.0;
+    let mut accumulator = 0.0;
+    let mut last_time = std::time::Instant::now();
+
     while game.is_running() {
-        // Update game state
-        game.update();
+        let current_time = std::time::Instant::now();
+        let frame_time = current_time.duration_since(last_time).as_secs_f32();
+        last_time = current_time;
 
-        // Render
-        terminal.draw(|frame| game_ui::render(frame, game))?;
+        let frame_time = frame_time.min(0.25);
+        accumulator += frame_time;
 
-        // Handle input
-        if event::poll(std::time::Duration::from_millis(50))? {
+        if event::poll(std::time::Duration::from_millis(0))? {
             loop {
                 if let Event::Key(key) = event::read()? {
                     match key.kind {
@@ -143,6 +146,14 @@ fn run_game<B: Backend>(terminal: &mut Terminal<B>, game: &mut GameState) -> Res
                 }
             }
         }
+
+        while accumulator >= TICK_RATE {
+            game.update();
+            accumulator -= TICK_RATE;
+        }
+
+        let alpha = accumulator / TICK_RATE;
+        terminal.draw(|frame| game_ui::render(frame, game, alpha))?;
     }
     Ok(())
 }

@@ -8,22 +8,18 @@ Spacey is a Rust-based TUI space shooter using `ratatui` for rendering and `cros
 
 ### Module Structure (`src/tui/`)
 
-- **`mod.rs`**: Entry point. Manages the main event loop and transitions between `App` (Menu) and `Game` states.
+- **`mod.rs`**: Entry point. Manages the main event loop (using an Accumulator pattern for fixed physics timestep) and transitions between `App` (Menu) and `Game` states.
 - **`app.rs`**: Handles the Start Menu state, including selection logic.
 - **`menu.rs`**: Defines `MenuItem` enums and labels.
 - **`ui.rs`**: Renders the Start Menu (ASCII title, options).
-- **`game.rs`**: Core game logic.
-  - `GameState`: Struct holding ship 2D coordinates (`ship_x`, `ship_y`), continuous movement flags (`moving_left`, `moving_right`, etc.), score, `lasers`, `enemies`, `explosions`, and flags (`paused`, `should_exit`). Also handles player `shield` logic (starts at 3).
-  - `update()`: called every frame to advance animation time, handle continuous movement, update positions of entities, and handle collision detection between lasers, enemies, and the player ship.
-- **`game_ui.rs`**: Renders the Game Screen.
-  - Renders a 2D vertical scrolling starfield.
-  - `render_ship()`: Renders the player sprite.
-  - `render_lasers()`, `render_enemies()`, and `render_explosions()`: Map 2D coordinates to screen space directly and render retro-style sprites/animations.
-  - `render_pause_overlay()`: Draws over the game when `paused` is true.
+- **`game.rs`**: Core game logic. Implements a Data-Oriented Component Architecture (ECS) with a `GameState` struct holding parallel arrays for `Position`, `Velocity`, `Collider`, etc. The `update()` method runs fixed-timestep subsystems.
+- **`game_ui.rs`**: Renders the Game Screen. It consumes an `alpha` value to interpolate positions between the current and previous frames for visually smooth rendering regardless of the physics tick rate.
 
 ## Design Patterns
 
 - **State Separation**: Menu and Game are distinct states managed by separate loops in `mod.rs`.
+- **Accumulator Loop**: Physics steps run at a fixed rate, decoupled from rendering.
+- **Data-Oriented ECS**: Entities are not OOP objects; they are indices into parallel component arrays (SoA) for better cache performance.
 - **Immediate Mode Rendering**: The UI is redrawn every frame based on the current state.
 - **Phosphor Aesthetics**: Use greens (`Color::Rgb(0, 200, 0)`) for that retro CRT look.
 
