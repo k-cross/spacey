@@ -92,6 +92,10 @@ fn render_ship(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
     if let Some(p_id) = game.player_id
         && game.active[p_id]
     {
+        if game.invincibility_timer > 0 && (game.invincibility_timer / 4) & 1 == 1 {
+            return;
+        }
+
         let pos = game.positions[p_id];
         let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
         let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;

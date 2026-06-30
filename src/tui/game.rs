@@ -60,6 +60,7 @@ pub struct GameState {
     pub score: u32,
     pub altitude: u32,
     pub shield: u8,
+    pub invincibility_timer: u32,
 }
 
 impl GameState {
@@ -95,6 +96,7 @@ impl GameState {
             score: 0,
             altitude: 1500,
             shield: 3,
+            invincibility_timer: 0,
         };
 
         let player = state.spawn_entity(EntityType::Player);
@@ -179,6 +181,10 @@ impl GameState {
     pub fn update(&mut self) {
         if !self.paused {
             self.frame = self.frame.wrapping_add(1);
+
+            if self.invincibility_timer > 0 {
+                self.invincibility_timer -= 1;
+            }
 
             if self.frame % 10 == 0 {
                 self.altitude = self.altitude.wrapping_add(1);
@@ -282,6 +288,7 @@ impl GameState {
 
                 if let Some(p_id) = self.player_id
                     && self.active[p_id]
+                    && self.invincibility_timer == 0
                 {
                     let p_pos = self.positions[p_id];
                     let p_col = self.colliders[p_id].unwrap_or(Collider { radius: 0.08 });
@@ -294,6 +301,7 @@ impl GameState {
                         new_explosions.push((e_pos.x, e_pos.y));
                         if self.shield > 0 {
                             self.shield -= 1;
+                            self.invincibility_timer = 60;
                         } else {
                             self.game_over = true;
                             self.active[p_id] = false;
