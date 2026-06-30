@@ -125,7 +125,13 @@ fn run_game<B: Backend>(terminal: &mut Terminal<B>, game: &mut GameState) -> Res
                             KeyCode::Up | KeyCode::Char('w') => game.moving_up = true,
                             KeyCode::Down | KeyCode::Char('s') => game.moving_down = true,
                             KeyCode::Char(' ') => game.firing = true,
-                            KeyCode::Enter => game.toggle_pause(),
+                            KeyCode::Enter => {
+                                if game.game_over {
+                                    game.exit_to_menu();
+                                } else {
+                                    game.toggle_pause();
+                                }
+                            }
                             KeyCode::Char('q') => game.exit_to_menu(),
                             _ => {}
                         },

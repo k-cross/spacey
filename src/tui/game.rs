@@ -55,6 +55,7 @@ pub struct GameState {
     pub frame: u64,
     pub last_fire_frame: u64,
     pub paused: bool,
+    pub game_over: bool,
     pub should_exit: bool,
     pub score: u32,
     pub altitude: u32,
@@ -89,6 +90,7 @@ impl GameState {
             frame: 0,
             last_fire_frame: 0,
             paused: false,
+            game_over: false,
             should_exit: false,
             score: 0,
             altitude: 1500,
@@ -143,22 +145,22 @@ impl GameState {
     }
 
     pub fn fire_laser(&mut self) {
-        if !self.paused {
-            if self.frame > self.last_fire_frame + 8 {
-                if let Some(player_id) = self.player_id {
-                    let p = self.positions[player_id];
-                    let id = self.spawn_entity(EntityType::Laser);
-                    self.positions[id] = Position {
-                        x: p.x,
-                        y: p.y,
-                        prev_x: p.x,
-                        prev_y: p.y,
-                    };
-                    self.velocities[id] = Some(Velocity { dx: 0.0, dy: -0.05 });
-                    self.colliders[id] = Some(Collider { radius: 0.02 });
-                    self.last_fire_frame = self.frame;
-                }
-            }
+        if !self.paused
+            && !self.game_over
+            && self.frame > self.last_fire_frame + 8
+            && let Some(player_id) = self.player_id
+        {
+            let p = self.positions[player_id];
+            let id = self.spawn_entity(EntityType::Laser);
+            self.positions[id] = Position {
+                x: p.x,
+                y: p.y,
+                prev_x: p.x,
+                prev_y: p.y,
+            };
+            self.velocities[id] = Some(Velocity { dx: 0.0, dy: -0.05 });
+            self.colliders[id] = Some(Collider { radius: 0.02 });
+            self.last_fire_frame = self.frame;
         }
     }
 
@@ -193,7 +195,9 @@ impl GameState {
                 }
             }
 
-            if let Some(p_id) = self.player_id {
+            if let Some(p_id) = self.player_id
+                && !self.game_over
+            {
                 let speed = 0.04;
                 let mut p = self.positions[p_id];
                 if self.moving_left {
@@ -211,16 +215,16 @@ impl GameState {
                 self.positions[p_id] = p;
             }
 
-            if self.firing {
+            if self.firing && !self.game_over {
                 self.fire_laser();
             }
 
             for i in 0..MAX_ENTITIES {
-                if self.active[i] {
-                    if let Some(vel) = self.velocities[i] {
-                        self.positions[i].x += vel.dx;
-                        self.positions[i].y += vel.dy;
-                    }
+                if self.active[i]
+                    && let Some(vel) = self.velocities[i]
+                {
+                    self.positions[i].x += vel.dx;
+                    self.positions[i].y += vel.dy;
                 }
             }
 
@@ -249,21 +253,23 @@ impl GameState {
                     }
                 }
 
-                if let Some(p_id) = self.player_id {
-                    if self.active[p_id] {
-                        let p_pos = self.positions[p_id];
-                        let p_col = self.colliders[p_id].unwrap_or(Collider { radius: 0.08 });
-                        let dx = e_pos.x - p_pos.x;
-                        let dy = e_pos.y - p_pos.y;
-                        let rad = e_col.radius + p_col.radius;
-                        if dx * dx + dy * dy < rad * rad {
-                            to_destroy.push(i);
-                            new_explosions.push((e_pos.x, e_pos.y));
-                            if self.shield > 0 {
-                                self.shield -= 1;
-                            } else {
-                                self.should_exit = true;
-                            }
+                if let Some(p_id) = self.player_id
+                    && self.active[p_id]
+                {
+                    let p_pos = self.positions[p_id];
+                    let p_col = self.colliders[p_id].unwrap_or(Collider { radius: 0.08 });
+                    let dx = e_pos.x - p_pos.x;
+                    let dy = e_pos.y - p_pos.y;
+                    let rad = e_col.radius + p_col.radius;
+                    if dx * dx + dy * dy < rad * rad {
+                        to_destroy.push(i);
+                        new_explosions.push((e_pos.x, e_pos.y));
+                        if self.shield > 0 {
+                            self.shield -= 1;
+                        } else {
+                            self.game_over = true;
+                            self.active[p_id] = false;
+                            new_explosions.push((p_pos.x, p_pos.y));
                         }
                     }
                 }
@@ -285,11 +291,9 @@ impl GameState {
                         } else {
                             self.lifetimes[i] = Some(life);
                         }
-                    } else if self.entity_types[i] == EntityType::Enemy && self.positions[i].y > 1.2
-                    {
-                        self.active[i] = false;
-                    } else if self.entity_types[i] == EntityType::Laser
-                        && self.positions[i].y < -1.2
+                    } else if (self.entity_types[i] == EntityType::Enemy
+                        && self.positions[i].y > 1.2)
+                        || (self.entity_types[i] == EntityType::Laser && self.positions[i].y < -1.2)
                     {
                         self.active[i] = false;
                     }
@@ -303,7 +307,7 @@ impl GameState {
     }
 
     pub fn exit_to_menu(&mut self) {
-        if self.paused {
+        if self.paused || self.game_over {
             self.should_exit = true;
         }
     }
@@ -328,6 +332,7 @@ mod tests {
         let game = GameState::new();
         assert_eq!(game.score, 0);
         assert!(!game.paused);
+        assert!(!game.game_over);
         assert!(!game.should_exit);
         assert!(game.player_id.is_some());
     }

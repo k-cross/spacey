@@ -38,8 +38,10 @@ pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
     render_ship(frame, game_area, game, alpha);
     render_hud(frame, hud_area, game);
 
-    // Pause overlay
-    if game.paused {
+    // Overlays
+    if game.game_over {
+        render_game_over_overlay(frame, area);
+    } else if game.paused {
         render_pause_overlay(frame, area);
     }
 }
@@ -87,41 +89,41 @@ fn render_ship(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
     let width = area.width as f32;
     let height = area.height as f32;
 
-    if let Some(p_id) = game.player_id {
-        if game.active[p_id] {
-            let pos = game.positions[p_id];
-            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
+    if let Some(p_id) = game.player_id
+        && game.active[p_id]
+    {
+        let pos = game.positions[p_id];
+        let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
+        let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
 
-            // Map -1.0 to 1.0 to screen coordinates
-            let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as u16;
-            let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as u16;
+        // Map -1.0 to 1.0 to screen coordinates
+        let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as u16;
+        let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as u16;
 
-            let ship_sprite = [r" /| ", r"/__\"];
+        let ship_sprite = [r" /| ", r"/__\"];
 
-            let ship_width = 4;
-            let ship_height = 2;
+        let ship_width = 4;
+        let ship_height = 2;
 
-            let ship_x = x_pos.saturating_sub(ship_width / 2);
-            let ship_y = y_pos.saturating_sub(ship_height / 2);
+        let ship_x = x_pos.saturating_sub(ship_width / 2);
+        let ship_y = y_pos.saturating_sub(ship_height / 2);
 
-            for (i, line) in ship_sprite.iter().enumerate() {
-                let draw_y = ship_y + i as u16;
-                if draw_y < area.height && ship_x < area.width {
-                    let ship_area = Rect {
-                        x: area.x + ship_x,
-                        y: area.y + draw_y,
-                        width: line.len() as u16,
-                        height: 1,
-                    };
+        for (i, line) in ship_sprite.iter().enumerate() {
+            let draw_y = ship_y + i as u16;
+            if draw_y < area.height && ship_x < area.width {
+                let ship_area = Rect {
+                    x: area.x + ship_x,
+                    y: area.y + draw_y,
+                    width: line.len() as u16,
+                    height: 1,
+                };
 
-                    let render_area = area.intersection(ship_area);
-                    if render_area.area() > 0 {
-                        frame.render_widget(
-                            Paragraph::new(*line).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
-                            render_area,
-                        );
-                    }
+                let render_area = area.intersection(ship_area);
+                if render_area.area() > 0 {
+                    frame.render_widget(
+                        Paragraph::new(*line).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
+                        render_area,
+                    );
                 }
             }
         }
@@ -299,4 +301,34 @@ fn render_pause_overlay(frame: &mut Frame, area: Rect) {
         .style(Style::default().bg(Color::Black))
         .alignment(Alignment::Center);
     frame.render_widget(pause_widget, pause_area);
+}
+
+/// Render game over overlay
+fn render_game_over_overlay(frame: &mut Frame, area: Rect) {
+    let game_over_text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "[ GAME OVER ]",
+            Style::default().fg(Color::Red).bold(),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press ENTER to return to menu",
+            Style::default().fg(Color::White),
+        )),
+    ];
+
+    let overlay_height = 4u16;
+    let overlay_width = 30u16;
+    let overlay_area = Rect {
+        x: area.x + (area.width.saturating_sub(overlay_width)) / 2,
+        y: area.y + (area.height.saturating_sub(overlay_height)) / 2,
+        width: overlay_width,
+        height: overlay_height,
+    };
+
+    let overlay_widget = Paragraph::new(game_over_text)
+        .style(Style::default().bg(Color::Black))
+        .alignment(Alignment::Center);
+    frame.render_widget(overlay_widget, overlay_area);
 }
