@@ -8,39 +8,8 @@ use ratatui::{
 use super::game::GameState;
 
 /// Retro phosphor green colors
-const PHOSPHOR_GREEN: Color = Color::Rgb(0, 200, 0);
 const PHOSPHOR_GREEN_DIM: Color = Color::Rgb(0, 100, 0);
 const PHOSPHOR_GREEN_BRIGHT: Color = Color::Rgb(50, 255, 50);
-
-/// Cockpit ASCII art (ship from behind view)
-const COCKPIT: &[&str] = &[
-    r"          /\                    /\          ",
-    r"         /  \                  /  \         ",
-    r"        /    \                /    \        ",
-    r"       /      \______________/      \       ",
-    r"      /       |              |       \      ",
-    r"     /________|              |________\     ",
-    r"    |    _____|              |_____    |    ",
-    r"    |   /     \______________/     \   |    ",
-    r"    |  /                            \  |    ",
-    r"    | /          ________            \ |    ",
-    r"    |/          /   /\   \            \|    ",
-    r"   _|__________/   /  \   \____________|_   ",
-    r"  /            \__/    \__/              \  ",
-    r" /                                        \ ",
-];
-
-/// Compact Cockpit ASCII art (for smaller screens)
-const COCKPIT_SMALL: &[&str] = &[
-    r"      /_______|              |_______\      ",
-    r"     |   _____|              |_____   |     ",
-    r"     |  /                            \  |     ",
-    r"     | /          ________            \ |     ",
-    r"     |/          /   /\   \            \|     ",
-    r"    _|__________/   /  \   \____________|_    ",
-    r"   /            \__/    \__/              \   ",
-    r"  /                                        \  ",
-];
 
 /// Render the entire game screen
 pub fn render(frame: &mut Frame, game: &GameState) {
@@ -50,43 +19,23 @@ pub fn render(frame: &mut Frame, game: &GameState) {
     let block = Block::default().style(Style::default().bg(Color::Black));
     frame.render_widget(block, area);
 
-    // Layout: Stars, Game view, Cockpit, HUD
-    let height = area.height;
-    let use_compact = height < 35;
+    // Layout: Game view, HUD
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(10),   // Game view
+            Constraint::Length(1), // HUD
+        ])
+        .split(area);
 
-    let (layout, cockpit_art) = if use_compact {
-        let l = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Reduced Sky
-                Constraint::Min(8),    // Game view
-                Constraint::Length(9), // Compact Cockpit (8 lines + 1 padding potentially)
-                Constraint::Length(1), // HUD
-            ])
-            .split(area);
-        (l, COCKPIT_SMALL)
-    } else {
-        let l = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(6),  // Top Sky/Stars
-                Constraint::Min(10),    // Game view
-                Constraint::Length(14), // Full Cockpit
-                Constraint::Length(1),  // HUD
-            ])
-            .split(area);
-        (l, COCKPIT)
-    };
+    let game_area = layout[0];
+    let hud_area = layout[1];
 
-    render_sky(frame, layout[0], game);
-    // Combine layout[1] and part of layout[0] logic for proper specific rendering if needed,
-    // but here we treat layout[1] as the main viewport for the trench run.
-    render_trench(frame, layout[1], game);
-    render_enemies(frame, layout[1], game);
-    render_lasers(frame, layout[1], game);
-    render_cockpit(frame, layout[2], game, cockpit_art);
-    render_crosshair(frame, layout[1], game);
-    render_hud(frame, layout[3], game);
+    render_starfield(frame, game_area, game);
+    render_enemies(frame, game_area, game);
+    render_lasers(frame, game_area, game);
+    render_ship(frame, game_area, game);
+    render_hud(frame, hud_area, game);
 
     // Pause overlay
     if game.paused {
@@ -94,112 +43,33 @@ pub fn render(frame: &mut Frame, game: &GameState) {
     }
 }
 
-/// Render sky/stars
-fn render_sky(frame: &mut Frame, area: Rect, game: &GameState) {
-    let width = area.width as usize;
-    // Stars still shift for parallax against ship movement?
-    // If we want "Cockpit" centered, the universe should move opposite.
-    // That means the "Sky" should shift opposite to ship_x.
-    let offset = (game.ship_x * 10.0) as i32;
-    let stars: String = (0..width)
-        .map(|i| {
-            let pos = (i as i32 + offset).rem_euclid(7);
-            if pos == 0 || pos == 3 { '*' } else { ' ' }
-        })
-        .collect();
-
-    let star_line = Paragraph::new(stars).style(Style::default().fg(PHOSPHOR_GREEN_DIM));
-    frame.render_widget(star_line, area);
-}
-
-/// Render the "Trench Run" perspective grid
-fn render_trench(frame: &mut Frame, area: Rect, game: &GameState) {
+/// Render scrolling starfield
+fn render_starfield(frame: &mut Frame, area: Rect, game: &GameState) {
     let width = area.width as usize;
     let height = area.height as usize;
-    let center_x = width / 2;
-    let center_y = height / 2;
-
-    // Animation phase
-    let phase = (game.frame as f32 * 0.5) % 8.0;
-
-    // Vanishing point moves with ship
-    let vp_x = center_x as i32 - (game.ship_x * (width as f32 / 3.0)) as i32;
-    let vp_y = center_y as i32 - (game.ship_y * (height as f32 / 3.0)) as i32;
 
     let mut buffer = vec![vec![' '; width]; height];
 
+    // Scroll offset increases over time, making stars move downwards
+    let scroll_offset = (game.frame as usize) / 2;
+
     for (y, row) in buffer.iter_mut().enumerate().take(height) {
-        let dy = y as i32 - vp_y;
-        if dy == 0 {
-            continue;
-        } // Horizon line
+        // Compute an absolute world Y coordinate for this row
+        let world_y = y.wrapping_sub(scroll_offset);
 
-        // Simulating ceiling and floor
-        let is_floor = dy > 0;
-        let dist_factor = (height as f32 / dy.abs() as f32).max(1.0);
-
-        // Perspective lines (Vertical walls/corridor)
-        // We draw two main perspective lines defining the "trench"
-        let trench_width_at_depth = (width as f32 / dist_factor) * 0.8;
-
-        let left_wall_x = (vp_x as f32 - trench_width_at_depth) as i32;
-        let right_wall_x = (vp_x as f32 + trench_width_at_depth) as i32;
-
-        // Draw Side Walls
-        if left_wall_x >= 0 && left_wall_x < width as i32 {
-            row[left_wall_x as usize] = if is_floor { '/' } else { '\\' };
-        }
-        if right_wall_x >= 0 && right_wall_x < width as i32 {
-            row[right_wall_x as usize] = if is_floor { '\\' } else { '/' };
-        }
-
-        // Horizontal Grid Lines (moving towards player)
-        // distance Z calculation approximation
-        let z_depth = 100.0 / dist_factor;
-        let grid_pos = (z_depth + phase) % 10.0;
-
-        if grid_pos < 1.0 {
-            // Draw horizontal line
-            let start = left_wall_x.max(0) as usize;
-            let end = right_wall_x.min(width as i32) as usize;
-            for (x, cell) in row.iter_mut().enumerate().take(end).skip(start) {
-                // Gaps in the middle to simulate individual floor/ceiling tiles
-                if x % 10 != 0 {
-                    *cell = '-';
-                }
+        // Restore the original visually appealing pattern
+        if world_y % 3 == 0 {
+            let x1 = (world_y * 7) % width.max(1);
+            let x2 = (world_y * 13) % width.max(1);
+            if x1 < width {
+                row[x1] = '.';
             }
-        }
-
-        // Vertical pillars on the side walls passing by
-        let pillar_interval = (z_depth + phase) % 20.0;
-        if pillar_interval < 2.0 {
-            // Draw "pillar" lines outside the trench
-            // Left side pillars
-            let outer_left = (left_wall_x - 10).max(0);
-            if left_wall_x > 0 {
-                for cell in row
-                    .iter_mut()
-                    .take(left_wall_x as usize)
-                    .skip(outer_left as usize)
-                {
-                    *cell = '|';
-                }
-            }
-            // Right side pillars
-            let outer_right = (right_wall_x + 10).min(width as i32);
-            if right_wall_x < width as i32 {
-                for cell in row
-                    .iter_mut()
-                    .take(outer_right as usize)
-                    .skip(right_wall_x as usize)
-                {
-                    *cell = '|';
-                }
+            if x2 < width {
+                row[x2] = '*';
             }
         }
     }
 
-    // Convert buffer to widgets
     let lines: Vec<Line> = buffer
         .into_iter()
         .map(|row| {
@@ -211,63 +81,74 @@ fn render_trench(frame: &mut Frame, area: Rect, game: &GameState) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Render enemies scaled by distance
+/// Render the player's ship
+fn render_ship(frame: &mut Frame, area: Rect, game: &GameState) {
+    let width = area.width as f32;
+    let height = area.height as f32;
+
+    // Map -1.0 to 1.0 to screen coordinates
+    let x_pos = ((game.ship_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as u16;
+    let y_pos = ((game.ship_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as u16;
+
+    let ship_sprite = [r" /| ", r"/__\"];
+
+    let ship_width = 4;
+    let ship_height = 2;
+
+    let ship_x = x_pos.saturating_sub(ship_width / 2);
+    let ship_y = y_pos.saturating_sub(ship_height / 2);
+
+    for (i, line) in ship_sprite.iter().enumerate() {
+        let draw_y = ship_y + i as u16;
+        if draw_y < area.height && ship_x < area.width {
+            let ship_area = Rect {
+                x: area.x + ship_x,
+                y: area.y + draw_y,
+                width: line.len() as u16,
+                height: 1,
+            };
+
+            let render_area = area.intersection(ship_area);
+            if render_area.area() > 0 {
+                frame.render_widget(
+                    Paragraph::new(*line).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
+                    render_area,
+                );
+            }
+        }
+    }
+}
+
+/// Render enemies
 fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState) {
     let width = area.width as f32;
     let height = area.height as f32;
-    let vp_x = width / 2.0 - (game.ship_x * (width / 3.0));
-    let vp_y = height / 2.0 - (game.ship_y * (height / 3.0));
 
     for enemy in &game.enemies {
-        // Simple perspective projection
-        // z=0 is camera, z=100 is far
-        if enemy.z <= 1.0 {
-            continue;
-        }
+        let x_pos = ((enemy.x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
+        let y_pos = ((enemy.y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
 
-        let scale = 100.0 / enemy.z;
+        let sprite = r"\-V-/"; // Simple fighter shape looking down
+        let sprite_len = 5;
 
-        // Projected Position relative to Vanishing Point
-        // Enemy x/y is -1.0 to 1.0
-        let world_x = enemy.x * width;
-        let world_y = enemy.y * height;
+        let draw_x = x_pos - sprite_len / 2;
+        let draw_y = y_pos;
 
-        let proj_x = vp_x + (world_x * scale * 0.5);
-        let proj_y = vp_y + (world_y * scale * 0.5);
+        if draw_x >= 0 && draw_x < area.width as i32 && draw_y >= 0 && draw_y < area.height as i32 {
+            let enemy_area = Rect {
+                x: area.x + draw_x as u16,
+                y: area.y + draw_y as u16,
+                width: sprite.len() as u16,
+                height: 1,
+            };
 
-        // Sprite Selection based on scale (distance)
-        let sprite = if scale < 2.0 {
-            "."
-        } else if scale < 5.0 {
-            "-o-"
-        } else {
-            r"/-\" // Simple fighter shape
-        };
-
-        // Don't render if out of bounds
-        if proj_x < 0.0 || proj_x >= width || proj_y < 0.0 || proj_y >= height {
-            continue;
-        }
-
-        let x = proj_x as u16;
-        let y = proj_y as u16;
-
-        // Using a centralized rect for the enemy widget
-        let enemy_area = Rect {
-            x: area.x + x,
-            y: area.y + y,
-            width: sprite.len() as u16,
-            height: 1,
-        };
-
-        // Clip to game area
-        let render_area = area.intersection(enemy_area);
-
-        if render_area.area() > 0 {
-            frame.render_widget(
-                Paragraph::new(sprite).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
-                render_area,
-            );
+            let render_area = area.intersection(enemy_area);
+            if render_area.area() > 0 {
+                frame.render_widget(
+                    Paragraph::new(sprite).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
+                    render_area,
+                );
+            }
         }
     }
 }
@@ -276,120 +157,37 @@ fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState) {
 fn render_lasers(frame: &mut Frame, area: Rect, game: &GameState) {
     let width = area.width as f32;
     let height = area.height as f32;
-    // same VP logic
-    let vp_x = width / 2.0 - (game.ship_x * (width / 3.0));
-    let vp_y = height / 2.0 - (game.ship_y * (height / 3.0));
 
     for laser in &game.lasers {
-        if laser.z <= 1.0 {
-            continue;
-        }
-        let scale = 100.0 / laser.z;
+        let x_pos = ((laser.x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
+        let y_pos = ((laser.y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
 
-        // Projected Position
-        let world_x = laser.x * width;
-        let world_y = laser.y * height;
+        if x_pos >= 0 && x_pos < area.width as i32 && y_pos >= 0 && y_pos < area.height as i32 {
+            let laser_area = Rect {
+                x: area.x + x_pos as u16,
+                y: area.y + y_pos as u16,
+                width: 1,
+                height: 1,
+            };
 
-        let proj_x = vp_x + (world_x * scale * 0.5);
-        let proj_y = vp_y + (world_y * scale * 0.5);
-
-        if proj_x < 0.0 || proj_x >= width || proj_y < 0.0 || proj_y >= height {
-            continue;
-        }
-
-        let x = proj_x as u16;
-        let y = proj_y as u16;
-
-        let sprite = match scale {
-            s if s < 2.0 => ".",
-            s if s < 5.0 => "|",
-            _ => "||",
-        };
-
-        // Simple 1x1 or 2x1 laser
-        // Center the sprite? Laser is small.
-        let laser_area = Rect {
-            x: area.x + x,
-            y: area.y + y,
-            width: sprite.len() as u16,
-            height: 1,
-        };
-
-        let render_area = area.intersection(laser_area);
-
-        if render_area.area() > 0 {
-            frame.render_widget(
-                Paragraph::new(sprite).style(Style::default().fg(Color::Red)),
-                render_area,
-            );
+            let render_area = area.intersection(laser_area);
+            if render_area.area() > 0 {
+                frame.render_widget(
+                    Paragraph::new("|").style(Style::default().fg(Color::Red)),
+                    render_area,
+                );
+            }
         }
     }
-}
-
-/// Render crosshair
-fn render_crosshair(frame: &mut Frame, area: Rect, _game: &GameState) {
-    let width = area.width;
-    let height = area.height;
-
-    // Crosshair strictly centered
-    let center_x = (width / 2) as i16;
-    let center_y = (height / 2) as i16;
-
-    let ch_x = center_x - 2; // Center "[ + ]"
-    let ch_y = center_y;
-
-    if ch_x >= 0 && ch_x < width as i16 && ch_y >= 0 && ch_y < height as i16 {
-        let ch_area = Rect {
-            x: area.x + ch_x as u16,
-            y: area.y + ch_y as u16,
-            width: 5,
-            height: 1,
-        };
-
-        let render_area = area.intersection(ch_area);
-        if render_area.area() > 0 {
-            frame.render_widget(
-                Paragraph::new("[ + ]").style(
-                    Style::default()
-                        .fg(PHOSPHOR_GREEN_BRIGHT)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                render_area,
-            );
-        }
-    }
-}
-
-/// Render cockpit/ship view
-fn render_cockpit(frame: &mut Frame, area: Rect, _game: &GameState, art: &[&str]) {
-    let width = area.width as usize;
-
-    // Center the cockpit (no parallax)
-    let cockpit_width = art.first().map(|s| s.len()).unwrap_or(0);
-    let padding = ((width as i32 - cockpit_width as i32) / 2).max(0) as usize;
-
-    let lines: Vec<Line> = art
-        .iter()
-        .map(|&s| {
-            let padded = format!("{:>width$}", s, width = padding + s.len());
-            Line::from(Span::styled(padded, Style::default().fg(PHOSPHOR_GREEN)))
-        })
-        .collect();
-
-    let cockpit = Paragraph::new(lines);
-    frame.render_widget(cockpit, area);
 }
 
 /// Render HUD bar at bottom
 fn render_hud(frame: &mut Frame, area: Rect, game: &GameState) {
     // Shield bar: "SHIELD: ||||||||"
-    // Using simple pipe chars
     let shield_str: String = (0..8)
         .map(|i| if i < game.shield as usize { '|' } else { ' ' })
         .collect();
 
-    // Layout: SHIELD  LASER  ALTITUDE  SCORE
-    // Using distinct spacing
     let hud = format!(
         "SHIELD: {}   LASER: READY   ALTITUDE: {:>4}   SCORE: {:06}",
         shield_str, game.altitude, game.score

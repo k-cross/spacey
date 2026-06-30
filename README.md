@@ -1,14 +1,14 @@
 # Spacey
 
-A first-person ASCII-based space shooter game built with Rust, targeting WebAssembly for browser deployment while maintaining native TUI support.
+A top-down 2D ASCII-based space shooter game built with Rust, targeting WebAssembly for browser deployment while maintaining native TUI support.
 
 ## Overview
 
-Navigate your spaceship through space in this retro-styled ASCII game. Engage hostile entities in first-person combat, all rendered in beautiful terminal graphics. Built with Rust for performance and compiled to WebAssembly for universal accessibility.
+Navigate your spaceship through space in this retro-styled ASCII game. Engage hostile entities in classic vertical scrolling shoot 'em up combat, all rendered in beautiful terminal graphics. Built with Rust for performance and compiled to WebAssembly for universal accessibility.
 
 ## Features
 
-- **First-Person Perspective**: Space combat from the cockpit
+- **Top-Down Perspective**: Classic vertical scrolling space combat
 - **ASCII Graphics**: Terminal-style visuals that work anywhere
 - **Cross-Platform**: Terminal support and browser deployment via WASM
 - **Fast-Paced Action**: Dodge and shoot your way through enemies
@@ -111,9 +111,9 @@ cargo test
 
 ## Roadmap
 
-- [x] Basic movement
-- [ ] Shooting mechanics
-- [ ] World and Rotational Geometry/Positioning
+- [x] Basic movement (Continuous 2D movement)
+- [x] Shooting mechanics (Continuous firing)
+- [x] Enemy basic entities
 - [ ] Enemy AI patterns
 - [ ] Multiple enemy types
 - [ ] Score tracking and leaderboards

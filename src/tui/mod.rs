@@ -16,7 +16,10 @@ pub use menu::MenuItem;
 use color_eyre::Result;
 use crossterm::{
     ExecutableCommand,
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{
+        self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::prelude::*;
@@ -30,12 +33,19 @@ pub fn run() -> Result<Option<MenuItem>> {
     io::stdout().execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
 
+    // Enable advanced keyboard events (required for KeyRelease events on many terminals)
+    // Ignore errors for terminals that don't support it
+    let _ = io::stdout().execute(PushKeyboardEnhancementFlags(
+        KeyboardEnhancementFlags::REPORT_EVENT_TYPES,
+    ));
+
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
 
     let result = run_main_loop(&mut terminal);
 
     // Restore terminal
+    let _ = io::stdout().execute(PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
 
@@ -102,19 +112,35 @@ fn run_game<B: Backend>(terminal: &mut Terminal<B>, game: &mut GameState) -> Res
         terminal.draw(|frame| game_ui::render(frame, game))?;
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(50))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            match key.code {
-                KeyCode::Left | KeyCode::Char('a') => game.move_left(),
-                KeyCode::Right | KeyCode::Char('d') => game.move_right(),
-                KeyCode::Up | KeyCode::Char('w') => game.move_up(),
-                KeyCode::Down | KeyCode::Char('s') => game.move_down(),
-                KeyCode::Char(' ') => game.fire_laser(),
-                KeyCode::Enter => game.toggle_pause(),
-                KeyCode::Char('q') => game.exit_to_menu(),
-                _ => {}
+        if event::poll(std::time::Duration::from_millis(50))? {
+            loop {
+                if let Event::Key(key) = event::read()? {
+                    match key.kind {
+                        KeyEventKind::Press => match key.code {
+                            KeyCode::Left | KeyCode::Char('a') => game.moving_left = true,
+                            KeyCode::Right | KeyCode::Char('d') => game.moving_right = true,
+                            KeyCode::Up | KeyCode::Char('w') => game.moving_up = true,
+                            KeyCode::Down | KeyCode::Char('s') => game.moving_down = true,
+                            KeyCode::Char(' ') => game.firing = true,
+                            KeyCode::Enter => game.toggle_pause(),
+                            KeyCode::Char('q') => game.exit_to_menu(),
+                            _ => {}
+                        },
+                        KeyEventKind::Release => match key.code {
+                            KeyCode::Left | KeyCode::Char('a') => game.moving_left = false,
+                            KeyCode::Right | KeyCode::Char('d') => game.moving_right = false,
+                            KeyCode::Up | KeyCode::Char('w') => game.moving_up = false,
+                            KeyCode::Down | KeyCode::Char('s') => game.moving_down = false,
+                            KeyCode::Char(' ') => game.firing = false,
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                }
+
+                if !event::poll(std::time::Duration::from_millis(0))? {
+                    break;
+                }
             }
         }
     }
