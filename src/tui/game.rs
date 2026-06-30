@@ -105,6 +105,7 @@ impl GameState {
             prev_y: 0.0,
         };
         state.colliders[player] = Some(Collider { radius: 0.08 });
+        state.velocities[player] = Some(Velocity { dx: 0.0, dy: 0.0 });
         state.player_id = Some(player);
 
         state.spawn_enemy();
@@ -198,21 +199,35 @@ impl GameState {
             if let Some(p_id) = self.player_id
                 && !self.game_over
             {
-                let speed = 0.04;
-                let mut p = self.positions[p_id];
+                let accel = 0.005;
+                let friction = 0.85;
+                let max_speed = 0.06;
+                let mut vel = self.velocities[p_id].unwrap_or(Velocity { dx: 0.0, dy: 0.0 });
+
                 if self.moving_left {
-                    p.x = (p.x - speed).max(-1.0);
+                    vel.dx -= accel;
                 }
                 if self.moving_right {
-                    p.x = (p.x + speed).min(1.0);
+                    vel.dx += accel;
                 }
                 if self.moving_up {
-                    p.y = (p.y - speed).max(-1.0);
+                    vel.dy -= accel;
                 }
                 if self.moving_down {
-                    p.y = (p.y + speed).min(1.0);
+                    vel.dy += accel;
                 }
-                self.positions[p_id] = p;
+
+                if !self.moving_left && !self.moving_right {
+                    vel.dx *= friction;
+                }
+                if !self.moving_up && !self.moving_down {
+                    vel.dy *= friction;
+                }
+
+                vel.dx = vel.dx.clamp(-max_speed, max_speed);
+                vel.dy = vel.dy.clamp(-max_speed, max_speed);
+
+                self.velocities[p_id] = Some(vel);
             }
 
             if self.firing && !self.game_over {
@@ -228,27 +243,39 @@ impl GameState {
                 }
             }
 
+            if let Some(p_id) = self.player_id {
+                self.positions[p_id].x = self.positions[p_id].x.clamp(-1.0, 1.0);
+                self.positions[p_id].y = self.positions[p_id].y.clamp(-1.0, 1.0);
+            }
+
             let mut to_destroy = Vec::new();
             let mut new_explosions = Vec::new();
 
+            let mut active_enemies = Vec::with_capacity(64);
+            let mut active_lasers = Vec::with_capacity(64);
+
             for i in 0..MAX_ENTITIES {
-                if !self.active[i] || self.entity_types[i] != EntityType::Enemy {
-                    continue;
+                if self.active[i] {
+                    if self.entity_types[i] == EntityType::Enemy {
+                        active_enemies.push(i);
+                    } else if self.entity_types[i] == EntityType::Laser {
+                        active_lasers.push(i);
+                    }
                 }
+            }
+
+            for &i in &active_enemies {
                 let e_pos = self.positions[i];
                 let e_col = self.colliders[i].unwrap_or(Collider { radius: 0.0 });
 
-                for j in 0..MAX_ENTITIES {
-                    if !self.active[j] || self.entity_types[j] != EntityType::Laser {
-                        continue;
-                    }
+                for &j in &active_lasers {
                     let l_pos = self.positions[j];
                     let dx = e_pos.x - l_pos.x;
                     let dy = e_pos.y - l_pos.y;
                     if dx * dx + dy * dy < e_col.radius * e_col.radius {
                         to_destroy.push(i);
                         to_destroy.push(j);
-                        self.score = self.score.wrapping_add(10);
+                        self.score = self.score.wrapping_add(100);
                         new_explosions.push((e_pos.x, e_pos.y));
                     }
                 }
@@ -263,6 +290,7 @@ impl GameState {
                     let rad = e_col.radius + p_col.radius;
                     if dx * dx + dy * dy < rad * rad {
                         to_destroy.push(i);
+                        self.score = self.score.wrapping_add(100);
                         new_explosions.push((e_pos.x, e_pos.y));
                         if self.shield > 0 {
                             self.shield -= 1;
@@ -338,6 +366,23 @@ mod tests {
     }
 
     #[test]
+    fn test_diagonal_movement() {
+        let mut game = GameState::new();
+        let p_id = game.player_id.unwrap();
+        game.positions[p_id].x = 0.0;
+        game.positions[p_id].y = 0.0;
+
+        // Move down and right simultaneously
+        game.moving_right = true;
+        game.moving_down = true;
+        game.update();
+
+        let expected = 0.005;
+        assert!((game.positions[p_id].x - expected).abs() < f32::EPSILON);
+        assert!((game.positions[p_id].y - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn test_movement_clamping() {
         let mut game = GameState::new();
         game.moving_right = true;
@@ -345,9 +390,9 @@ mod tests {
         let p_id = game.player_id.unwrap();
         game.positions[p_id].x = 0.9;
 
-        game.update();
-        game.update();
-        game.update();
+        for _ in 0..100 {
+            game.update();
+        }
 
         assert!((game.positions[p_id].x - 1.0).abs() < f32::EPSILON);
     }
@@ -367,5 +412,95 @@ mod tests {
             }
         }
         assert_eq!(lasers, 1);
+    }
+
+    #[test]
+    fn test_update_performance() {
+        let mut game = GameState::new();
+        game.player_id = None; // Disable player to avoid player collision overhead
+
+        // Fill game with many entities but spread them out so they don't collide!
+        for i in 1..MAX_ENTITIES {
+            game.active[i] = true;
+            if i % 2 == 0 {
+                game.entity_types[i] = EntityType::Enemy;
+                game.colliders[i] = Some(Collider { radius: 0.05 });
+                // Spread out horizontally and vertically
+                game.positions[i] = Position {
+                    x: (i as f32) * 0.01,
+                    y: (i as f32) * 0.01,
+                    prev_x: 0.0,
+                    prev_y: 0.0,
+                };
+            } else {
+                game.entity_types[i] = EntityType::Laser;
+                game.colliders[i] = Some(Collider { radius: 0.02 });
+                game.positions[i] = Position {
+                    x: -(i as f32) * 0.01,
+                    y: -(i as f32) * 0.01,
+                    prev_x: 0.0,
+                    prev_y: 0.0,
+                };
+            }
+        }
+
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            game.update();
+        }
+        let elapsed = start.elapsed();
+        // Ensure that 100 frames of 1000 entities without collisions is resolved very quickly (< 100ms)
+        assert!(
+            elapsed.as_millis() < 100,
+            "Update loop is too slow: {}ms",
+            elapsed.as_millis()
+        );
+    }
+
+    #[test]
+    fn test_collision_logic() {
+        let mut game = GameState::new();
+        game.active.fill(false); // Clear all
+        game.player_id = None; // Disable player so we don't self-collide if slot 0 is reused
+
+        // Set up one enemy
+        let enemy = game.spawn_entity(EntityType::Enemy);
+        game.positions[enemy] = Position {
+            x: 0.0,
+            y: 0.0,
+            prev_x: 0.0,
+            prev_y: 0.0,
+        };
+        game.colliders[enemy] = Some(Collider { radius: 0.1 });
+
+        // Set up one laser overlapping it
+        let laser = game.spawn_entity(EntityType::Laser);
+        game.positions[laser] = Position {
+            x: 0.0,
+            y: 0.0,
+            prev_x: 0.0,
+            prev_y: 0.0,
+        };
+        game.colliders[laser] = Some(Collider { radius: 0.1 });
+
+        let initial_score = game.score;
+
+        game.update(); // Trigger collision
+
+        // The entities should be destroyed (though slots may be reused for explosions)
+        let has_enemy = game
+            .active
+            .iter()
+            .zip(game.entity_types.iter())
+            .any(|(&a, &t)| a && t == EntityType::Enemy);
+        let has_laser = game
+            .active
+            .iter()
+            .zip(game.entity_types.iter())
+            .any(|(&a, &t)| a && t == EntityType::Laser);
+
+        assert!(!has_enemy, "Enemy should be destroyed");
+        assert!(!has_laser, "Laser should be destroyed");
+        assert_eq!(game.score, initial_score + 100);
     }
 }

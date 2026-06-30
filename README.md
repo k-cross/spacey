@@ -80,7 +80,9 @@ cargo run
 │       ├── menu.rs      # Menu logic
 │       ├── ui.rs        # Menu rendering
 │       ├── game.rs      # Game state and ECS data (Struct of Arrays)
-│       └── game_ui.rs   # Game rendering with visual interpolation
+│       ├── game_ui.rs   # Game rendering with visual interpolation
+│       ├── leaderboard.rs # High scores display
+│       └── name_entry.rs  # High score name input
 ├── assets/              # ASCII art and resources
 ├── devenv.nix           # Development environment configuration
 ├── devenv.lock          # Locked dependencies
@@ -113,9 +115,9 @@ cargo test
 - [x] Shooting mechanics (Continuous firing)
 - [x] Enemy basic entities
 - [x] Collision detection and shield system
+- [x] Score tracking and leaderboards
 - [ ] Enemy AI patterns
 - [ ] Multiple enemy types
-- [ ] Score tracking and leaderboards
 - [ ] Sound effects (WASM)
 - [ ] Power-ups and weapons
 - [ ] Level progression

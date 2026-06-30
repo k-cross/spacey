@@ -6,7 +6,9 @@
 mod app;
 mod game;
 mod game_ui;
+mod leaderboard;
 mod menu;
+mod name_entry;
 mod ui;
 
 pub use app::App;
@@ -53,6 +55,8 @@ pub fn run() -> Result<Option<MenuItem>> {
 
 /// Main application loop handling menu and game states
 fn run_main_loop<B: Backend>(terminal: &mut Terminal<B>) -> Result<Option<MenuItem>> {
+    let mut high_scores: Vec<(String, u32)> = Vec::new();
+
     loop {
         // Run menu and get selection
         let mut app = App::new();
@@ -63,14 +67,27 @@ fn run_main_loop<B: Backend>(terminal: &mut Terminal<B>) -> Result<Option<MenuIt
                 // Run the game
                 let mut game = GameState::new();
                 run_game(terminal, &mut game)?;
-                // Game exited - loop back to menu
+
+                // Game exited - check if we should add a high score
+                if game.game_over && game.score > 0 {
+                    let is_high_score = high_scores.len() < 10
+                        || game.score > high_scores.last().map(|&(_, s)| s).unwrap_or(0);
+
+                    if is_high_score && let Some(name) = name_entry::run(terminal, game.score)? {
+                        high_scores.push((name, game.score));
+                        high_scores.sort_by_key(|b| std::cmp::Reverse(b.1));
+                        high_scores.truncate(10);
+                    }
+                }
+            }
+            Some(MenuItem::HighScores) => {
+                leaderboard::run(terminal, &high_scores)?;
             }
             Some(MenuItem::Exit) => {
                 return Ok(Some(MenuItem::Exit));
             }
-            Some(action) => {
-                // Other menu items - for now just return
-                return Ok(Some(action));
+            Some(_) => {
+                // Other menu items just loop back for now
             }
             None => {
                 // User quit with 'q'
