@@ -7,6 +7,15 @@ pub enum EntityType {
     Enemy,
     Laser,
     Explosion,
+    Asteroid,
+}
+
+#[derive(Clone, Debug)]
+pub struct AsteroidData {
+    pub points: Vec<(f32, f32)>,
+    pub point_radius: f32,
+    pub angle: f32,
+    pub spin_rate: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -43,6 +52,7 @@ pub struct GameState {
     pub velocities: Vec<Option<Velocity>>,
     pub colliders: Vec<Option<Collider>>,
     pub lifetimes: Vec<Option<Lifetime>>,
+    pub asteroids: Vec<Option<AsteroidData>>,
 
     pub player_id: Option<usize>,
 
@@ -80,6 +90,7 @@ impl GameState {
             velocities: vec![None; MAX_ENTITIES],
             colliders: vec![None; MAX_ENTITIES],
             lifetimes: vec![None; MAX_ENTITIES],
+            asteroids: vec![None; MAX_ENTITIES],
 
             player_id: None,
             moving_left: false,
@@ -122,6 +133,7 @@ impl GameState {
                 self.velocities[i] = None;
                 self.colliders[i] = None;
                 self.lifetimes[i] = None;
+                self.asteroids[i] = None;
                 return i;
             }
         }
@@ -145,6 +157,68 @@ impl GameState {
         };
         self.velocities[id] = Some(Velocity { dx: 0.0, dy: 0.02 });
         self.colliders[id] = Some(Collider { radius: 0.05 });
+    }
+
+    fn spawn_asteroid(&mut self) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        let x = ((seed % 200) as f32 / 100.0) - 1.0;
+
+        let id = self.spawn_entity(EntityType::Asteroid);
+        self.positions[id] = Position {
+            x,
+            y: -1.2,
+            prev_x: x,
+            prev_y: -1.2,
+        };
+        // Move downwards slowly
+        self.velocities[id] = Some(Velocity { dx: 0.0, dy: 0.005 });
+
+        // Generate points for the asteroid (large or small)
+        let mut points = Vec::new();
+        let is_large = seed % 3 != 0; // 66% chance to be a large one with a path
+
+        if is_large {
+            let num_points = 45;
+            let radius = 0.45; // Make the asteroid physically much larger
+            let road_width = 0.22; // Widen the road significantly so player (radius 0.08) + asteroid chunks (radius 0.03) can pass easily
+
+            // Fill a circle rather than just the perimeter to make it look substantial.
+            for r_step in 1..=4 {
+                let r = radius * (r_step as f32 / 4.0);
+                for i in 0..num_points {
+                    let angle = (i as f32 / num_points as f32) * std::f32::consts::PI * 2.0;
+                    let px = angle.cos() * r;
+                    let py = angle.sin() * r;
+                    // Leave a gap in the middle to form a road along the local Y axis
+                    if px.abs() > road_width {
+                        points.push((px, py));
+                    }
+                }
+            }
+        } else {
+            let num_points = 12;
+            let radius = 0.08;
+            for r_step in 1..=2 {
+                let r = radius * (r_step as f32 / 2.0);
+                for i in 0..num_points {
+                    let angle = (i as f32 / num_points as f32) * std::f32::consts::PI * 2.0;
+                    let px = angle.cos() * r;
+                    let py = angle.sin() * r;
+                    points.push((px, py));
+                }
+            }
+        }
+
+        self.asteroids[id] = Some(AsteroidData {
+            points,
+            point_radius: 0.03,
+            angle: 0.0,
+            spin_rate: 0.01 * if seed % 2 == 0 { 1.0 } else { -1.0 },
+        });
     }
 
     pub fn fire_laser(&mut self) {
@@ -194,6 +268,9 @@ impl GameState {
             if self.frame % 150 == 0 {
                 self.spawn_enemy();
             }
+            if self.frame % 350 == 0 {
+                self.spawn_asteroid();
+            }
 
             for i in 0..MAX_ENTITIES {
                 if self.active[i] {
@@ -241,11 +318,16 @@ impl GameState {
             }
 
             for i in 0..MAX_ENTITIES {
-                if self.active[i]
-                    && let Some(vel) = self.velocities[i]
-                {
-                    self.positions[i].x += vel.dx;
-                    self.positions[i].y += vel.dy;
+                if self.active[i] {
+                    if let Some(vel) = self.velocities[i] {
+                        self.positions[i].x += vel.dx;
+                        self.positions[i].y += vel.dy;
+                    }
+                    if self.entity_types[i] == EntityType::Asteroid {
+                        if let Some(data) = &mut self.asteroids[i] {
+                            data.angle += data.spin_rate;
+                        }
+                    }
                 }
             }
 
@@ -259,6 +341,7 @@ impl GameState {
 
             let mut active_enemies = Vec::with_capacity(64);
             let mut active_lasers = Vec::with_capacity(64);
+            let mut active_asteroids = Vec::with_capacity(64);
 
             for i in 0..MAX_ENTITIES {
                 if self.active[i] {
@@ -266,6 +349,8 @@ impl GameState {
                         active_enemies.push(i);
                     } else if self.entity_types[i] == EntityType::Laser {
                         active_lasers.push(i);
+                    } else if self.entity_types[i] == EntityType::Asteroid {
+                        active_asteroids.push(i);
                     }
                 }
             }
@@ -289,6 +374,7 @@ impl GameState {
                 if let Some(p_id) = self.player_id
                     && self.active[p_id]
                     && self.invincibility_timer == 0
+                    && e_pos.y <= 1.0
                 {
                     let p_pos = self.positions[p_id];
                     let p_col = self.colliders[p_id].unwrap_or(Collider { radius: 0.08 });
@@ -306,6 +392,73 @@ impl GameState {
                             self.game_over = true;
                             self.active[p_id] = false;
                             new_explosions.push((p_pos.x, p_pos.y));
+                        }
+                    }
+                }
+            }
+
+            for &a_id in &active_asteroids {
+                if let Some(ast) = &self.asteroids[a_id] {
+                    let a_pos = self.positions[a_id];
+                    let cos_a = ast.angle.cos();
+                    let sin_a = ast.angle.sin();
+                    let radius = ast.point_radius;
+
+                    for &(px, py) in &ast.points {
+                        let rx = px * cos_a - py * sin_a;
+                        let ry = px * sin_a + py * cos_a;
+                        let cx = a_pos.x + rx;
+                        let cy = a_pos.y + ry;
+
+                        for &l_id in &active_lasers {
+                            if to_destroy.contains(&l_id) {
+                                continue;
+                            }
+                            let l_pos = self.positions[l_id];
+                            let dx = cx - l_pos.x;
+                            let dy = cy - l_pos.y;
+                            let l_rad = self.colliders[l_id].map(|c| c.radius).unwrap_or(0.0);
+                            if dx * dx + dy * dy < (radius + l_rad) * (radius + l_rad) {
+                                to_destroy.push(l_id);
+                                new_explosions.push((l_pos.x, l_pos.y));
+                            }
+                        }
+
+                        for &e_id in &active_enemies {
+                            if to_destroy.contains(&e_id) {
+                                continue;
+                            }
+                            let e_pos = self.positions[e_id];
+                            let dx = cx - e_pos.x;
+                            let dy = cy - e_pos.y;
+                            let e_rad = self.colliders[e_id].map(|c| c.radius).unwrap_or(0.0);
+                            if dx * dx + dy * dy < (radius + e_rad) * (radius + e_rad) {
+                                to_destroy.push(e_id);
+                                new_explosions.push((e_pos.x, e_pos.y));
+                            }
+                        }
+
+                        if let Some(p_id) = self.player_id {
+                            if self.active[p_id]
+                                && self.invincibility_timer == 0
+                                && !to_destroy.contains(&p_id)
+                                && cy <= 1.0
+                            {
+                                let p_pos = self.positions[p_id];
+                                let p_rad = self.colliders[p_id].map(|c| c.radius).unwrap_or(0.08);
+                                let dx = cx - p_pos.x;
+                                let dy = cy - p_pos.y;
+                                if dx * dx + dy * dy < (radius + p_rad) * (radius + p_rad) {
+                                    new_explosions.push((p_pos.x, p_pos.y));
+                                    if self.shield > 0 {
+                                        self.shield -= 1;
+                                        self.invincibility_timer = 60;
+                                    } else {
+                                        self.game_over = true;
+                                        self.active[p_id] = false;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -330,6 +483,8 @@ impl GameState {
                     } else if (self.entity_types[i] == EntityType::Enemy
                         && self.positions[i].y > 1.2)
                         || (self.entity_types[i] == EntityType::Laser && self.positions[i].y < -1.2)
+                        || (self.entity_types[i] == EntityType::Asteroid
+                            && self.positions[i].y > 1.6)
                     {
                         self.active[i] = false;
                     }
@@ -510,5 +665,45 @@ mod tests {
         assert!(!has_enemy, "Enemy should be destroyed");
         assert!(!has_laser, "Laser should be destroyed");
         assert_eq!(game.score, initial_score + 100);
+    }
+
+    #[test]
+    fn test_asteroid_collision() {
+        let mut game = GameState::new();
+        game.active.fill(false);
+
+        // Spawn asteroid
+        let ast_id = game.spawn_entity(EntityType::Asteroid);
+        game.positions[ast_id] = Position {
+            x: 0.0,
+            y: 0.0,
+            prev_x: 0.0,
+            prev_y: 0.0,
+        };
+        game.asteroids[ast_id] = Some(AsteroidData {
+            points: vec![(0.0, 0.0)],
+            point_radius: 0.1,
+            angle: 0.0,
+            spin_rate: 0.0,
+        });
+
+        // Spawn laser
+        let laser = game.spawn_entity(EntityType::Laser);
+        game.positions[laser] = Position {
+            x: 0.0,
+            y: 0.0,
+            prev_x: 0.0,
+            prev_y: 0.0,
+        };
+        game.colliders[laser] = Some(Collider { radius: 0.1 });
+
+        game.update(); // Trigger collision
+
+        let has_laser = game
+            .active
+            .iter()
+            .zip(game.entity_types.iter())
+            .any(|(&a, &t)| a && t == EntityType::Laser);
+        assert!(!has_laser, "Laser should be destroyed by asteroid");
     }
 }

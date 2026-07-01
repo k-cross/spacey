@@ -32,6 +32,7 @@ pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
     let hud_area = layout[1];
 
     render_starfield(frame, game_area, game, alpha);
+    render_asteroids(frame, game_area, game, alpha);
     render_enemies(frame, game_area, game, alpha);
     render_lasers(frame, game_area, game, alpha);
     render_explosions(frame, game_area, game, alpha);
@@ -128,6 +129,57 @@ fn render_ship(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
                         Paragraph::new(*line).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
                         render_area,
                     );
+                }
+            }
+        }
+    }
+}
+
+/// Render asteroids
+fn render_asteroids(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
+    let width = area.width as f32;
+    let height = area.height as f32;
+
+    for i in 0..MAX_ENTITIES {
+        if game.active[i] && game.entity_types[i] == EntityType::Asteroid {
+            let pos = game.positions[i];
+            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
+            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
+
+            if let Some(ast) = &game.asteroids[i] {
+                let cos_a = ast.angle.cos();
+                let sin_a = ast.angle.sin();
+
+                for &(px, py) in &ast.points {
+                    let rx = px * cos_a - py * sin_a;
+                    let ry = px * sin_a + py * cos_a;
+                    let cx = interp_x + rx;
+                    let cy = interp_y + ry;
+
+                    let x_pos = ((cx + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
+                    let y_pos = ((cy + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
+
+                    if x_pos >= 0
+                        && x_pos < area.width as i32
+                        && y_pos >= 0
+                        && y_pos < area.height as i32
+                    {
+                        let chunk_area = Rect {
+                            x: area.x + x_pos as u16,
+                            y: area.y + y_pos as u16,
+                            width: 1,
+                            height: 1,
+                        };
+
+                        let render_area = area.intersection(chunk_area);
+                        if render_area.area() > 0 {
+                            frame.render_widget(
+                                Paragraph::new("O")
+                                    .style(Style::default().fg(Color::Rgb(150, 100, 50))),
+                                render_area,
+                            );
+                        }
+                    }
                 }
             }
         }
