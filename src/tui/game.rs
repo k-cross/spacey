@@ -140,12 +140,17 @@ impl GameState {
         MAX_ENTITIES - 1
     }
 
-    fn spawn_enemy(&mut self) {
+    /// Time-seeded pseudo-random value used to vary spawns.
+    fn rng_seed() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_micros() as u64;
+            .as_micros() as u64
+    }
+
+    fn spawn_enemy(&mut self) {
+        let seed = Self::rng_seed();
         let x = ((seed % 200) as f32 / 100.0) - 1.0;
 
         let id = self.spawn_entity(EntityType::Enemy);
@@ -160,19 +165,19 @@ impl GameState {
     }
 
     fn spawn_asteroid(&mut self) {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+        let seed = Self::rng_seed();
         let x = ((seed % 200) as f32 / 100.0) - 1.0;
 
+        // Spawn well above the top edge (-1.0) so the whole body — including the
+        // radius (~0.45) of the largest asteroids — is off-screen and scrolls in
+        // gradually instead of popping into view.
+        let spawn_y = -1.7;
         let id = self.spawn_entity(EntityType::Asteroid);
         self.positions[id] = Position {
             x,
-            y: -1.2,
+            y: spawn_y,
             prev_x: x,
-            prev_y: -1.2,
+            prev_y: spawn_y,
         };
         // Move downwards slowly
         self.velocities[id] = Some(Velocity { dx: 0.0, dy: 0.005 });
@@ -282,9 +287,9 @@ impl GameState {
             if let Some(p_id) = self.player_id
                 && !self.game_over
             {
-                let accel = 0.005;
-                let friction = 0.85;
-                let max_speed = 0.06;
+                let accel = 0.0025;
+                let friction = 0.8;
+                let max_speed = 0.03;
                 let mut vel = self.velocities[p_id].unwrap_or(Velocity { dx: 0.0, dy: 0.0 });
 
                 if self.moving_left {
@@ -323,10 +328,10 @@ impl GameState {
                         self.positions[i].x += vel.dx;
                         self.positions[i].y += vel.dy;
                     }
-                    if self.entity_types[i] == EntityType::Asteroid {
-                        if let Some(data) = &mut self.asteroids[i] {
-                            data.angle += data.spin_rate;
-                        }
+                    if self.entity_types[i] == EntityType::Asteroid
+                        && let Some(data) = &mut self.asteroids[i]
+                    {
+                        data.angle += data.spin_rate;
                     }
                 }
             }
@@ -361,9 +366,11 @@ impl GameState {
 
                 for &j in &active_lasers {
                     let l_pos = self.positions[j];
+                    let l_rad = self.colliders[j].map(|c| c.radius).unwrap_or(0.0);
                     let dx = e_pos.x - l_pos.x;
                     let dy = e_pos.y - l_pos.y;
-                    if dx * dx + dy * dy < e_col.radius * e_col.radius {
+                    let rad = e_col.radius + l_rad;
+                    if dx * dx + dy * dy < rad * rad {
                         to_destroy.push(i);
                         to_destroy.push(j);
                         self.score = self.score.wrapping_add(100);
@@ -438,25 +445,24 @@ impl GameState {
                             }
                         }
 
-                        if let Some(p_id) = self.player_id {
-                            if self.active[p_id]
-                                && self.invincibility_timer == 0
-                                && !to_destroy.contains(&p_id)
-                                && cy <= 1.0
-                            {
-                                let p_pos = self.positions[p_id];
-                                let p_rad = self.colliders[p_id].map(|c| c.radius).unwrap_or(0.08);
-                                let dx = cx - p_pos.x;
-                                let dy = cy - p_pos.y;
-                                if dx * dx + dy * dy < (radius + p_rad) * (radius + p_rad) {
-                                    new_explosions.push((p_pos.x, p_pos.y));
-                                    if self.shield > 0 {
-                                        self.shield -= 1;
-                                        self.invincibility_timer = 60;
-                                    } else {
-                                        self.game_over = true;
-                                        self.active[p_id] = false;
-                                    }
+                        if let Some(p_id) = self.player_id
+                            && self.active[p_id]
+                            && self.invincibility_timer == 0
+                            && !to_destroy.contains(&p_id)
+                            && cy <= 1.0
+                        {
+                            let p_pos = self.positions[p_id];
+                            let p_rad = self.colliders[p_id].map(|c| c.radius).unwrap_or(0.08);
+                            let dx = cx - p_pos.x;
+                            let dy = cy - p_pos.y;
+                            if dx * dx + dy * dy < (radius + p_rad) * (radius + p_rad) {
+                                new_explosions.push((p_pos.x, p_pos.y));
+                                if self.shield > 0 {
+                                    self.shield -= 1;
+                                    self.invincibility_timer = 60;
+                                } else {
+                                    self.game_over = true;
+                                    self.active[p_id] = false;
                                 }
                             }
                         }
@@ -540,7 +546,7 @@ mod tests {
         game.moving_down = true;
         game.update();
 
-        let expected = 0.005;
+        let expected = 0.0025;
         assert!((game.positions[p_id].x - expected).abs() < f32::EPSILON);
         assert!((game.positions[p_id].y - expected).abs() < f32::EPSILON);
     }
@@ -558,6 +564,86 @@ mod tests {
         }
 
         assert!((game.positions[p_id].x - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_player_speed_is_capped() {
+        // Guards the "moves too far" complaint: no matter how much velocity
+        // accumulates, a single tick must clamp it to the fine-control cap.
+        let mut game = GameState::new();
+        let p_id = game.player_id.unwrap();
+        game.velocities[p_id] = Some(Velocity { dx: 5.0, dy: -5.0 });
+        game.moving_right = true;
+        game.moving_up = true;
+
+        game.update();
+
+        let vel = game.velocities[p_id].unwrap();
+        assert!(
+            vel.dx.abs() <= 0.03 + f32::EPSILON,
+            "dx {} not capped",
+            vel.dx
+        );
+        assert!(
+            vel.dy.abs() <= 0.03 + f32::EPSILON,
+            "dy {} not capped",
+            vel.dy
+        );
+    }
+
+    #[test]
+    fn test_player_decelerates_when_idle() {
+        // Guards fine control: with no keys held, friction must bleed off
+        // speed so the ship settles instead of gliding across the screen.
+        let mut game = GameState::new();
+        let p_id = game.player_id.unwrap();
+        game.positions[p_id].x = 0.0;
+        game.positions[p_id].y = 0.0;
+        game.velocities[p_id] = Some(Velocity { dx: 0.03, dy: 0.0 });
+
+        game.update(); // no movement flags set
+
+        let vel = game.velocities[p_id].unwrap();
+        assert!(
+            vel.dx < 0.03,
+            "idle ship should decelerate, dx = {}",
+            vel.dx
+        );
+        assert!(
+            vel.dx > 0.0,
+            "friction shouldn't reverse direction, dx = {}",
+            vel.dx
+        );
+    }
+
+    #[test]
+    fn test_asteroid_spawns_fully_offscreen() {
+        // Guards the "pop-in" fix: the leading edge of the whole asteroid body
+        // must start above the top of the viewport (world y = -1.0) so it
+        // scrolls into view instead of materializing on-screen.
+        let mut game = GameState::new();
+        game.active.fill(false);
+        game.player_id = None;
+
+        game.spawn_asteroid();
+
+        let id = (0..MAX_ENTITIES)
+            .find(|&i| game.active[i] && game.entity_types[i] == EntityType::Asteroid)
+            .expect("asteroid should be spawned");
+
+        let pos = game.positions[id];
+        let ast = game.asteroids[id].as_ref().expect("asteroid data");
+
+        // angle starts at 0, so a point's world y is simply pos.y + py.
+        let leading_edge = ast
+            .points
+            .iter()
+            .map(|&(_, py)| pos.y + py + ast.point_radius)
+            .fold(f32::MIN, f32::max);
+        assert!(
+            leading_edge < -1.0,
+            "asteroid leading edge {leading_edge} should start off-screen (< -1.0)"
+        );
     }
 
     #[test]

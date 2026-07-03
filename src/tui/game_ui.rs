@@ -1,6 +1,7 @@
 //! Game UI rendering
 
 use ratatui::{
+    buffer::Buffer,
     prelude::*,
     widgets::{Block, Paragraph},
 };
@@ -10,6 +11,26 @@ use super::game::{EntityType, GameState, MAX_ENTITIES};
 /// Retro phosphor green colors
 const PHOSPHOR_GREEN_DIM: Color = Color::Rgb(0, 100, 0);
 const PHOSPHOR_GREEN_BRIGHT: Color = Color::Rgb(50, 255, 50);
+
+/// Map a world coordinate in [-1.0, 1.0] to a cell offset within `area`.
+fn world_to_screen(area: Rect, wx: f32, wy: f32) -> (i32, i32) {
+    let w = (area.width as f32 - 1.0).max(0.0);
+    let h = (area.height as f32 - 1.0).max(0.0);
+    (((wx + 1.0) * 0.5 * w) as i32, ((wy + 1.0) * 0.5 * h) as i32)
+}
+
+/// Write a single character at cell offset `(sx, sy)` within `area`, clipping
+/// anything outside the area's bounds.
+fn put(buf: &mut Buffer, area: Rect, sx: i32, sy: i32, ch: char, color: Color) {
+    if sx >= 0
+        && sx < area.width as i32
+        && sy >= 0
+        && sy < area.height as i32
+        && let Some(cell) = buf.cell_mut((area.x + sx as u16, area.y + sy as u16))
+    {
+        cell.set_char(ch).set_fg(color);
+    }
+}
 
 /// Render the entire game screen
 pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
@@ -32,11 +53,11 @@ pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
     let hud_area = layout[1];
 
     render_starfield(frame, game_area, game, alpha);
-    render_asteroids(frame, game_area, game, alpha);
-    render_enemies(frame, game_area, game, alpha);
-    render_lasers(frame, game_area, game, alpha);
-    render_explosions(frame, game_area, game, alpha);
-    render_ship(frame, game_area, game, alpha);
+    render_asteroids(frame.buffer_mut(), game_area, game, alpha);
+    render_enemies(frame.buffer_mut(), game_area, game, alpha);
+    render_lasers(frame.buffer_mut(), game_area, game, alpha);
+    render_explosions(frame.buffer_mut(), game_area, game, alpha);
+    render_ship(frame.buffer_mut(), game_area, game, alpha);
     render_hud(frame, hud_area, game);
 
     // Overlays
@@ -86,10 +107,7 @@ fn render_starfield(frame: &mut Frame, area: Rect, game: &GameState, _alpha: f32
 }
 
 /// Render the player's ship
-fn render_ship(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
-    let width = area.width as f32;
-    let height = area.height as f32;
-
+fn render_ship(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
     if let Some(p_id) = game.player_id
         && game.active[p_id]
     {
@@ -101,44 +119,31 @@ fn render_ship(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
         let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
         let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
 
-        // Map -1.0 to 1.0 to screen coordinates
-        let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as u16;
-        let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as u16;
+        let (x_pos, y_pos) = world_to_screen(area, interp_x, interp_y);
 
+        // Center the 4x2 sprite on the ship position.
         let ship_sprite = [r" /| ", r"/__\"];
+        let base_x = x_pos - 2;
+        let base_y = y_pos - 1;
 
-        let ship_width = 4;
-        let ship_height = 2;
-
-        let ship_x = x_pos.saturating_sub(ship_width / 2);
-        let ship_y = y_pos.saturating_sub(ship_height / 2);
-
-        for (i, line) in ship_sprite.iter().enumerate() {
-            let draw_y = ship_y + i as u16;
-            if draw_y < area.height && ship_x < area.width {
-                let ship_area = Rect {
-                    x: area.x + ship_x,
-                    y: area.y + draw_y,
-                    width: line.len() as u16,
-                    height: 1,
-                };
-
-                let render_area = area.intersection(ship_area);
-                if render_area.area() > 0 {
-                    frame.render_widget(
-                        Paragraph::new(*line).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
-                        render_area,
-                    );
-                }
+        for (row, line) in ship_sprite.iter().enumerate() {
+            for (col, ch) in line.chars().enumerate() {
+                put(
+                    buf,
+                    area,
+                    base_x + col as i32,
+                    base_y + row as i32,
+                    ch,
+                    PHOSPHOR_GREEN_BRIGHT,
+                );
             }
         }
     }
 }
 
 /// Render asteroids
-fn render_asteroids(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
-    let width = area.width as f32;
-    let height = area.height as f32;
+fn render_asteroids(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
+    let brown = Color::Rgb(150, 100, 50);
 
     for i in 0..MAX_ENTITIES {
         if game.active[i] && game.entity_types[i] == EntityType::Asteroid {
@@ -151,35 +156,10 @@ fn render_asteroids(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32)
                 let sin_a = ast.angle.sin();
 
                 for &(px, py) in &ast.points {
-                    let rx = px * cos_a - py * sin_a;
-                    let ry = px * sin_a + py * cos_a;
-                    let cx = interp_x + rx;
-                    let cy = interp_y + ry;
-
-                    let x_pos = ((cx + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
-                    let y_pos = ((cy + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
-
-                    if x_pos >= 0
-                        && x_pos < area.width as i32
-                        && y_pos >= 0
-                        && y_pos < area.height as i32
-                    {
-                        let chunk_area = Rect {
-                            x: area.x + x_pos as u16,
-                            y: area.y + y_pos as u16,
-                            width: 1,
-                            height: 1,
-                        };
-
-                        let render_area = area.intersection(chunk_area);
-                        if render_area.area() > 0 {
-                            frame.render_widget(
-                                Paragraph::new("O")
-                                    .style(Style::default().fg(Color::Rgb(150, 100, 50))),
-                                render_area,
-                            );
-                        }
-                    }
+                    let cx = interp_x + px * cos_a - py * sin_a;
+                    let cy = interp_y + px * sin_a + py * cos_a;
+                    let (sx, sy) = world_to_screen(area, cx, cy);
+                    put(buf, area, sx, sy, 'O', brown);
                 }
             }
         }
@@ -187,9 +167,8 @@ fn render_asteroids(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32)
 }
 
 /// Render enemies
-fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
-    let width = area.width as f32;
-    let height = area.height as f32;
+fn render_enemies(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
+    let sprite = r"\-V-/"; // Simple fighter shape looking down
 
     for i in 0..MAX_ENTITIES {
         if game.active[i] && game.entity_types[i] == EntityType::Enemy {
@@ -197,78 +176,39 @@ fn render_enemies(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
             let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
             let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
 
-            let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
-            let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
+            let (x_pos, y_pos) = world_to_screen(area, interp_x, interp_y);
+            let base_x = x_pos - sprite.len() as i32 / 2;
 
-            let sprite = r"\-V-/"; // Simple fighter shape looking down
-            let sprite_len = 5;
-
-            let draw_x = x_pos - sprite_len / 2;
-            let draw_y = y_pos;
-
-            if draw_x >= 0
-                && draw_x < area.width as i32
-                && draw_y >= 0
-                && draw_y < area.height as i32
-            {
-                let enemy_area = Rect {
-                    x: area.x + draw_x as u16,
-                    y: area.y + draw_y as u16,
-                    width: sprite.len() as u16,
-                    height: 1,
-                };
-
-                let render_area = area.intersection(enemy_area);
-                if render_area.area() > 0 {
-                    frame.render_widget(
-                        Paragraph::new(sprite).style(Style::default().fg(PHOSPHOR_GREEN_BRIGHT)),
-                        render_area,
-                    );
-                }
+            for (col, ch) in sprite.chars().enumerate() {
+                put(
+                    buf,
+                    area,
+                    base_x + col as i32,
+                    y_pos,
+                    ch,
+                    PHOSPHOR_GREEN_BRIGHT,
+                );
             }
         }
     }
 }
 
 /// Render lasers
-fn render_lasers(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
-    let width = area.width as f32;
-    let height = area.height as f32;
-
+fn render_lasers(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
     for i in 0..MAX_ENTITIES {
         if game.active[i] && game.entity_types[i] == EntityType::Laser {
             let pos = game.positions[i];
             let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
             let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
 
-            let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
-            let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
-
-            if x_pos >= 0 && x_pos < area.width as i32 && y_pos >= 0 && y_pos < area.height as i32 {
-                let laser_area = Rect {
-                    x: area.x + x_pos as u16,
-                    y: area.y + y_pos as u16,
-                    width: 1,
-                    height: 1,
-                };
-
-                let render_area = area.intersection(laser_area);
-                if render_area.area() > 0 {
-                    frame.render_widget(
-                        Paragraph::new("|").style(Style::default().fg(Color::Red)),
-                        render_area,
-                    );
-                }
-            }
+            let (sx, sy) = world_to_screen(area, interp_x, interp_y);
+            put(buf, area, sx, sy, '|', Color::Red);
         }
     }
 }
 
 /// Render explosions
-fn render_explosions(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
-    let width = area.width as f32;
-    let height = area.height as f32;
-
+fn render_explosions(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
     for i in 0..MAX_ENTITIES {
         if game.active[i] && game.entity_types[i] == EntityType::Explosion {
             let pos = game.positions[i];
@@ -277,32 +217,15 @@ fn render_explosions(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32
             let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
             let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
 
-            let x_pos = ((interp_x + 1.0) * 0.5 * (width - 1.0).max(0.0)) as i32;
-            let y_pos = ((interp_y + 1.0) * 0.5 * (height - 1.0).max(0.0)) as i32;
+            let (sx, sy) = world_to_screen(area, interp_x, interp_y);
 
-            if x_pos >= 0 && x_pos < area.width as i32 && y_pos >= 0 && y_pos < area.height as i32 {
-                let sprite = match timer {
-                    0..=2 => "*",
-                    3..=5 => "O",
-                    6..=9 => ".",
-                    _ => " ",
-                };
-
-                let explosion_area = Rect {
-                    x: area.x + x_pos as u16,
-                    y: area.y + y_pos as u16,
-                    width: 1,
-                    height: 1,
-                };
-
-                let render_area = area.intersection(explosion_area);
-                if render_area.area() > 0 {
-                    frame.render_widget(
-                        Paragraph::new(sprite).style(Style::default().fg(Color::Yellow)),
-                        render_area,
-                    );
-                }
-            }
+            let ch = match timer {
+                0..=2 => '*',
+                3..=5 => 'O',
+                6..=9 => '.',
+                _ => ' ',
+            };
+            put(buf, area, sx, sy, ch, Color::Yellow);
         }
     }
 }
