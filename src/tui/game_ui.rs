@@ -1,9 +1,12 @@
 //! Game UI rendering
 
 use ratatui::{
-    buffer::Buffer,
     prelude::*,
-    widgets::{Block, Paragraph},
+    symbols::Marker,
+    widgets::{
+        Block, Paragraph,
+        canvas::{Canvas, Circle, Line as CanvasLine},
+    },
 };
 
 use super::game::{EntityType, GameState, MAX_ENTITIES};
@@ -11,26 +14,6 @@ use super::game::{EntityType, GameState, MAX_ENTITIES};
 /// Retro phosphor green colors
 const PHOSPHOR_GREEN_DIM: Color = Color::Rgb(0, 100, 0);
 const PHOSPHOR_GREEN_BRIGHT: Color = Color::Rgb(50, 255, 50);
-
-/// Map a world coordinate in [-1.0, 1.0] to a cell offset within `area`.
-fn world_to_screen(area: Rect, wx: f32, wy: f32) -> (i32, i32) {
-    let w = (area.width as f32 - 1.0).max(0.0);
-    let h = (area.height as f32 - 1.0).max(0.0);
-    (((wx + 1.0) * 0.5 * w) as i32, ((wy + 1.0) * 0.5 * h) as i32)
-}
-
-/// Write a single character at cell offset `(sx, sy)` within `area`, clipping
-/// anything outside the area's bounds.
-fn put(buf: &mut Buffer, area: Rect, sx: i32, sy: i32, ch: char, color: Color) {
-    if sx >= 0
-        && sx < area.width as i32
-        && sy >= 0
-        && sy < area.height as i32
-        && let Some(cell) = buf.cell_mut((area.x + sx as u16, area.y + sy as u16))
-    {
-        cell.set_char(ch).set_fg(color);
-    }
-}
 
 /// Render the entire game screen
 pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
@@ -53,11 +36,7 @@ pub fn render(frame: &mut Frame, game: &GameState, alpha: f32) {
     let hud_area = layout[1];
 
     render_starfield(frame, game_area, game, alpha);
-    render_asteroids(frame.buffer_mut(), game_area, game, alpha);
-    render_enemies(frame.buffer_mut(), game_area, game, alpha);
-    render_lasers(frame.buffer_mut(), game_area, game, alpha);
-    render_explosions(frame.buffer_mut(), game_area, game, alpha);
-    render_ship(frame.buffer_mut(), game_area, game, alpha);
+    render_world_canvas(frame, game_area, game, alpha);
     render_hud(frame, hud_area, game);
 
     // Overlays
@@ -106,128 +85,177 @@ fn render_starfield(frame: &mut Frame, area: Rect, game: &GameState, _alpha: f32
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Render the player's ship
-fn render_ship(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
-    if let Some(p_id) = game.player_id
-        && game.active[p_id]
-    {
-        if game.invincibility_timer > 0 && (game.invincibility_timer / 4) & 1 == 1 {
+/// Render all world entities as one braille wireframe canvas.
+///
+/// The canvas plane uses world coordinates directly (bounds `[-1, 1]`), but its
+/// Y axis points *up* while the game's world Y points *down*, so every vertex is
+/// negated at draw time. The previous per-type draw order (asteroids → enemies
+/// → lasers → explosions → ship) is preserved via `ctx.layer()`, so later
+/// groups win per-cell color conflicts.
+fn render_world_canvas(frame: &mut Frame, area: Rect, game: &GameState, alpha: f32) {
+    const ROCK_COLOR: Color = Color::Rgb(150, 100, 50);
+
+    /// Queue a segment, clamping endpoints that poke past the world bounds so
+    /// shapes flatten against the edge instead of vanishing — Canvas drops a
+    /// `Line` entirely when an endpoint is out of bounds. Segments with both
+    /// endpoints outside are skipped.
+    fn push_seg(segs: &mut Vec<(f64, f64, f64, f64)>, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let inside = |x: f64, y: f64| (-1.0..=1.0).contains(&x) && (-1.0..=1.0).contains(&y);
+        if !inside(x1, y1) && !inside(x2, y2) {
             return;
         }
-
-        let pos = game.positions[p_id];
-        let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-        let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
-
-        let (x_pos, y_pos) = world_to_screen(area, interp_x, interp_y);
-
-        // Center the 4x2 sprite on the ship position.
-        let ship_sprite = [r" /| ", r"/__\"];
-        let base_x = x_pos - 2;
-        let base_y = y_pos - 1;
-
-        for (row, line) in ship_sprite.iter().enumerate() {
-            for (col, ch) in line.chars().enumerate() {
-                put(
-                    buf,
-                    area,
-                    base_x + col as i32,
-                    base_y + row as i32,
-                    ch,
-                    PHOSPHOR_GREEN_BRIGHT,
-                );
-            }
-        }
+        segs.push((
+            x1.clamp(-1.0, 1.0),
+            y1.clamp(-1.0, 1.0),
+            x2.clamp(-1.0, 1.0),
+            y2.clamp(-1.0, 1.0),
+        ));
     }
-}
 
-/// Render asteroids
-fn render_asteroids(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
-    let brown = Color::Rgb(150, 100, 50);
+    // (x, y, radius) — each asteroid collision point drawn as its collider.
+    let mut rock_circles: Vec<(f64, f64, f64)> = Vec::new();
+    let mut enemy_segs: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut laser_segs: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut explosion_circles: Vec<(f64, f64, f64, Color)> = Vec::new();
+    let mut ship_segs: Vec<(f64, f64, f64, f64)> = Vec::new();
 
     for i in 0..MAX_ENTITIES {
-        if game.active[i] && game.entity_types[i] == EntityType::Asteroid {
-            let pos = game.positions[i];
-            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
+        if !game.active[i] {
+            continue;
+        }
+        let pos = game.positions[i];
+        let cx = (pos.prev_x + (pos.x - pos.prev_x) * alpha) as f64;
+        let cy = (pos.prev_y + (pos.y - pos.prev_y) * alpha) as f64;
 
-            if let Some(ast) = &game.asteroids[i] {
-                let cos_a = ast.angle.cos();
-                let sin_a = ast.angle.sin();
-
-                for &(px, py) in &ast.points {
-                    let cx = interp_x + px * cos_a - py * sin_a;
-                    let cy = interp_y + px * sin_a + py * cos_a;
-                    let (sx, sy) = world_to_screen(area, cx, cy);
-                    put(buf, area, sx, sy, 'O', brown);
+        match game.entity_types[i] {
+            EntityType::Asteroid => {
+                if let Some(ast) = &game.asteroids[i] {
+                    let cos_a = ast.angle.cos();
+                    let sin_a = ast.angle.sin();
+                    for &(px, py) in &ast.points {
+                        // Apply the asteroid's spin, then translate to world position.
+                        let rx = px * cos_a - py * sin_a;
+                        let ry = px * sin_a + py * cos_a;
+                        rock_circles.push((
+                            cx + rx as f64,
+                            cy + ry as f64,
+                            ast.point_radius as f64,
+                        ));
+                    }
                 }
             }
-        }
-    }
-}
-
-/// Render enemies
-fn render_enemies(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
-    let sprite = r"\-V-/"; // Simple fighter shape looking down
-
-    for i in 0..MAX_ENTITIES {
-        if game.active[i] && game.entity_types[i] == EntityType::Enemy {
-            let pos = game.positions[i];
-            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
-
-            let (x_pos, y_pos) = world_to_screen(area, interp_x, interp_y);
-            let base_x = x_pos - sprite.len() as i32 / 2;
-
-            for (col, ch) in sprite.chars().enumerate() {
-                put(
-                    buf,
-                    area,
-                    base_x + col as i32,
-                    y_pos,
-                    ch,
-                    PHOSPHOR_GREEN_BRIGHT,
-                );
+            EntityType::Enemy => {
+                // Wireframe fighter, nose pointing down toward the player
+                // (replaces the old `\-V-/` sprite).
+                let wing_l = (cx - 0.06, cy - 0.03);
+                let body_l = (cx - 0.025, cy - 0.005);
+                let nose = (cx, cy + 0.045);
+                let body_r = (cx + 0.025, cy - 0.005);
+                let wing_r = (cx + 0.06, cy - 0.03);
+                for &((x1, y1), (x2, y2)) in &[
+                    (wing_l, body_l),
+                    (body_l, nose),
+                    (nose, body_r),
+                    (body_r, wing_r),
+                ] {
+                    push_seg(&mut enemy_segs, x1, y1, x2, y2);
+                }
             }
+            EntityType::Laser => {
+                push_seg(&mut laser_segs, cx, cy - 0.02, cx, cy + 0.02);
+            }
+            EntityType::Explosion => {
+                // Expanding shockwave ring that dims as it dies (replaces the
+                // `*` → `O` → `.` glyph sequence).
+                let timer = game.lifetimes[i].map(|l| l.timer).unwrap_or(0);
+                let radius = 0.012 + f64::from(timer) * 0.006;
+                let color = if timer < 6 {
+                    Color::Yellow
+                } else {
+                    Color::Rgb(130, 130, 0)
+                };
+                explosion_circles.push((cx, cy, radius, color));
+            }
+            EntityType::Player => {} // drawn below so it stays on top
         }
     }
-}
 
-/// Render lasers
-fn render_lasers(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
-    for i in 0..MAX_ENTITIES {
-        if game.active[i] && game.entity_types[i] == EntityType::Laser {
-            let pos = game.positions[i];
-            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
+    // Ship: wireframe fighter, nose pointing up (toward -y in world space).
+    if let Some(p_id) = game.player_id
+        && game.active[p_id]
+        // Blink out on alternating windows during invincibility.
+        && !(game.invincibility_timer > 0 && (game.invincibility_timer / 4) & 1 == 1)
+    {
+        let pos = game.positions[p_id];
+        let cx = (pos.prev_x + (pos.x - pos.prev_x) * alpha) as f64;
+        let cy = (pos.prev_y + (pos.y - pos.prev_y) * alpha) as f64;
 
-            let (sx, sy) = world_to_screen(area, interp_x, interp_y);
-            put(buf, area, sx, sy, '|', Color::Red);
+        let nose = (cx, cy - 0.09);
+        let left = (cx - 0.07, cy + 0.06);
+        let right = (cx + 0.07, cy + 0.06);
+        let tail = (cx, cy + 0.03); // rear notch so it reads as a ship, not a triangle
+        for &((x1, y1), (x2, y2)) in &[(nose, left), (left, tail), (tail, right), (right, nose)] {
+            push_seg(&mut ship_segs, x1, y1, x2, y2);
         }
     }
-}
 
-/// Render explosions
-fn render_explosions(buf: &mut Buffer, area: Rect, game: &GameState, alpha: f32) {
-    for i in 0..MAX_ENTITIES {
-        if game.active[i] && game.entity_types[i] == EntityType::Explosion {
-            let pos = game.positions[i];
-            let timer = game.lifetimes[i].map(|l| l.timer).unwrap_or(0);
-
-            let interp_x = pos.prev_x + (pos.x - pos.prev_x) * alpha;
-            let interp_y = pos.prev_y + (pos.y - pos.prev_y) * alpha;
-
-            let (sx, sy) = world_to_screen(area, interp_x, interp_y);
-
-            let ch = match timer {
-                0..=2 => '*',
-                3..=5 => 'O',
-                6..=9 => '.',
-                _ => ' ',
-            };
-            put(buf, area, sx, sy, ch, Color::Yellow);
-        }
-    }
+    let canvas = Canvas::default()
+        .background_color(Color::Black)
+        .marker(Marker::Braille)
+        .x_bounds([-1.0, 1.0])
+        .y_bounds([-1.0, 1.0])
+        .paint(move |ctx| {
+            // Each collision point is drawn as its actual collider circle, so
+            // the rendered rock is exactly the area that causes impact — the
+            // road through a large asteroid appears as the circle-free gap.
+            for &(x, y, r) in &rock_circles {
+                ctx.draw(&Circle {
+                    x,
+                    y: -y,
+                    radius: r,
+                    color: ROCK_COLOR,
+                });
+            }
+            ctx.layer();
+            for &(x1, y1, x2, y2) in &enemy_segs {
+                ctx.draw(&CanvasLine {
+                    x1,
+                    y1: -y1,
+                    x2,
+                    y2: -y2,
+                    color: PHOSPHOR_GREEN_BRIGHT,
+                });
+            }
+            for &(x1, y1, x2, y2) in &laser_segs {
+                ctx.draw(&CanvasLine {
+                    x1,
+                    y1: -y1,
+                    x2,
+                    y2: -y2,
+                    color: Color::Red,
+                });
+            }
+            ctx.layer();
+            for &(x, y, r, color) in &explosion_circles {
+                ctx.draw(&Circle {
+                    x,
+                    y: -y,
+                    radius: r,
+                    color,
+                });
+            }
+            ctx.layer();
+            for &(x1, y1, x2, y2) in &ship_segs {
+                ctx.draw(&CanvasLine {
+                    x1,
+                    y1: -y1,
+                    x2,
+                    y2: -y2,
+                    color: PHOSPHOR_GREEN_BRIGHT,
+                });
+            }
+        });
+    frame.render_widget(canvas, area);
 }
 
 /// Render HUD bar at bottom
